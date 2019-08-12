@@ -1,0 +1,1293 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+<HEAD>
+<TITLE>callisto v0.1.2 Reference Manual</TITLE>
+<META HTTP-EQUIV="content-type"
+CONTENT="text/html; charset=iso-8859-1">
+<style type="text/css">
+pre code {
+  background-color: #eee;
+  border: 1px solid #999;
+  display: block;
+  padding: 20px;
+}
+</style>
+</HEAD>
+
+<BODY>
+
+
+<h1>
+<a HREF="http://www.northarc.com/callisto/"><img src="callisto_512.png" alt="callisto"></a>
+<p>callisto v0.1.2 Reference Manual
+</h1>
+<small>By Curtis Hartung</small>
+
+<p><a href="https://www.tapatalk.com/groups/callisto/">[ Community Forums ]</a>
+
+<ul>
+   <li><a href="#downloads">1.0 Introduction</a>
+   <ul>
+	  <li><a href="#mitlicense">1.1 Licence (hint: it's free)</a>
+   </ul>
+
+   <li><a href="#TechnicalOverview">2.0 Technical Overview</a>
+   <ul>
+	  <li><a href="#unit">2.1 unit</a>
+	  <li><a href="#running">2.2 running a program</a>
+   </ul>
+
+   <li><a href="#Building">3.0 Building</a>
+   <ul>
+	  <li><a href="#Embedding">3.1 Embedding</a>
+   </ul>
+
+   <li><a href="#getting started">4.0 Getting Started</a>
+
+   <li><a href="#specifics">5.0 Language Specifics</a>
+
+   <ul>
+	  <li><a href="#symbols">5.1 symbols</a>
+	  <li><a href="#breakcontinue">5.2 break/continue</a>
+	  <li><a href="#copy">5.3 copy</a>
+	  <li><a href="#for">5.4 for</a>
+	  <li><a href="#while">5.5 while</a>
+	  <li><a href="#enum">5.6 enum</a>
+	  <li><a href="#foreach">5.7 foreach</a>
+	  <li><a href="#switch">5.8 switch</a>
+	  <li><a href="#do">5.9 do</a>
+	  <li><a href="#ifelse">5.10 if/else</a>
+	  <li><a href="#ret">5.11 return</a>
+	  <li><a href="#new">5.12 new</a>
+	  <li><a href="#casting">5.13 type casting</a>
+	  <li><a href="#strings">5.14 string operators</a>
+	  <ul>
+		 <li><a href="#stringadd">5.14.1 concatenation</a>
+	  </ul>
+   </ul>
+
+   <li><a href="#API">6.0 API</a>
+   <ul>
+	  <li><a href="#callbacks">6.1 Callbacks</a>
+	  <li><a href="#metamethods">6.2 Meta Methods</a>
+	  <li><a href="#standardlibraries">6.3 Standard Libraries</a>
+	  <li><a href="#standardlibraries">6.7 Roadmap of Coming Features</a>
+   </ul>
+   <li><a href="#downloads">7.0 Downloads</a>
+   <li><a href="#contributing">8.0 Contributing</a>
+   <li><a href="#Contact">9.0 Contact</a>
+
+</ul>
+
+
+<hr><h1><a name="Introduction">1.0 Introduction</a></h1>
+
+<small>
+"The difficulty is that things almost always start with some guy
+doing something that <em>at the time</em> looks totally useless" -
+James Burke</small>
+
+<p>
+callisto is a powerful language that feels like c/c++ but is easy to
+embed and extend like <a href="http://www.lua.org">Lua<a>
+
+<p>
+This is all original code, not a derivitave work,  I wanted to create a langauge that preserved what I liked about lua, chiefly:
+
+<ul>
+<li>easy to embed
+<li>easy to extend
+<li>works natively with tables/arrays
+<li>straightforward...ish  syntax
+<li>automatic memory management
+</ul>
+
+<P>
+Without what drove me nuts:
+
+<ul>
+<li>lack of curly braces for scope, yeah I said it.
+<li>lack of handy operators such as +=, ++, etc.
+<li>multithreaded/coroutine functionality hard to get right for some common use cases
+<li>the block comment syntax makes me want to stab someone
+<li>1-based arrays O_o
+<li>for loops just... for loops
+<li>klunky multiple return value paradigm
+<li>switch()
+</ul>
+
+
+<p>
+Honestly none of these rise to the level of deal-breaker, lua can do what needs to be done. 
+
+<p>
+Mostly as a dare to myself, I decided to write a "better lua" with at
+least:
+
+<ul>
+<li>no "which version?!" 3rd-party libraries, everything you need is part of the download 
+<li>allow object-oriented styles, complete with inheritance
+<li>none of the whacked out ivory-tower nonesense that has been larded into c++ (I'm looking at you, lambda)
+<li>teach myself how to write a compiler (this was hard)
+<li>not inventing new ways to express ideas already familiar to c.
+</ul>
+
+<p>
+So I started with a lot of reading and playing with yak, lexx, bison
+etc. The smoking crater of that attempt haunts my nightmares; you
+would need a new scientific unit to measure that fail.  
+
+<p>
+A few years later I tried again. This time for an embedded project
+that would run byte-code fetched from an I2C EEPROM. Spectacular
+failure. Never has so much code been written by so few for no one.  
+
+<p>
+Several more attempts also ended in dismal soul-crushing defeat.
+
+<p>
+At last <em>this</em> one didn't sink into the swamp!
+
+<hr><h2><a name="mitlicense">1.1 Licence</a></h2>
+callisto is released under the MIT licence
+<a href="https://en.wikipedia.org/wiki/MIT_License">found here</a> and
+included in the code. I do ask to be notified of any substantial usage,
+but just so I can list it here and feel like my effort actually
+accomplished something.
+
+<hr><h1><a name="TechnicalOverview">2.0 Technical Overview</a></h1>
+
+<p>
+If you know c/c++ you already know most of callisto, all the following is legal:
+
+<pre><code>/*
+ block comments!
+*/
+
+for( i=0; i<10; i++ )
+{
+   // do something 10 times
+}
+
+a = 10;
+while( a &lt= 20 )
+{
+   a++;
+}
+
+if ( a != 21 )
+{
+   printf("you broke your compiler again");
+}
+
+anArray = [0, 1, 2, 3, "cool", null ];
+print( anArray[2] ); // will print '2'
+print( anArray[4] ); // will print 'cool'
+
+switch( s )
+{
+   case 1: // do something
+   case 2: // do something after
+}
+</code></pre>
+
+<p>
+callisto is dynamically typed, there are three simple types which are
+always passed BY VALUE:
+
+<ul>
+<li>null - universal "lack of value" it equals only another null
+<li>integer - 64-bit integer
+<li>float - 64-bit float
+</ul>
+
+in addition there are five intrinsically supported types which are
+always passed BY REFERENCE unless overridden with the
+<a href="#copy">copy</a> directive 
+
+<ul>
+<li>string - 8-bit character string
+<li>wstring - UNICODE character string
+<li>array - indexed by integer
+<li>table - indexed by key
+<li>unit - explained below
+</ul>
+
+<hr><h2><a name="unit">2.1 unit</a></h2>
+
+-- The <a href="#unit">unit</a> replaces functions, structs and classes. It takes
+arguments (optionally) and can be called or instantiated. This simplification is one of the cornerstones
+of callisto.
+
+<p>
+-- All units return a single value or null if <a href="#ret">return</a> is not explicitly called
+
+<p>
+-- A unit defined inside another unit is a child of that unit, in this
+example <em>Child</em> is a child of <em>Parent</em>
+
+<pre><code>unit Parent()
+{
+   p = 10;
+
+   unit Child()
+   {
+      c = 20;
+	  return c;
+   }
+}
+</code></pre>
+
+-- A child can also be defined outside a parent, this is equivilant
+to the above:
+
+<pre><code>unit Parent()
+{
+   p = 10;
+}
+
+unit Parent::Child()
+{
+   c = 20;
+   return c;
+}
+</code></pre>
+
+-- A Child can have multiple parents, all of which will be called, in
+order, upon instantaition, but have no effect when called statically:
+
+<pre><code>unit Parent1()
+{
+   a = 1;
+}
+
+unit Parent2()
+{
+   b = 2;
+}
+
+unit Child() : Parent1, Parent2
+{
+   // when instantiated with 'new' a == 1 and b == 2 here
+   // if called statically, no constructors are run and a/b will not be available
+}
+</pre></code>
+
+A unit can be <em>called</em> or instantiated with <em>new</em> In the
+above example to call <em>Child</em>
+
+<pre><code>Parent::Child();
+</pre></code>
+
+Calls <em>Child</em> statically and will return the value '20'
+<p>
+To instantiate <em>Child</em>
+
+<pre><code>I = new Parent::Child();
+</pre></code>
+
+This is the same as calling <em>Parent();</em> then <em>Child();</em> inside that parent
+and keeping the results, in this case:
+
+<pre><code>printf( I.c ); // will result in '20'
+printf( I.p ); // will result in '10'
+</pre></code>
+
+Members can be added dynamically by assigning to them:
+
+<pre><code>I.something = 20;
+</pre></code>
+
+<em>something</em> is now a variable inside of 'I'
+
+<p>
+Units take any number of arguments and can be called with any number
+of arguments
+
+
+
+<hr><h2><a name="running">2.2 Running a Program</a></h2>
+When code is loaded either with the command-tool or
+<a href="#Callisto_load"><code>Callisto_load</code></a> it is parsed
+and run. This establishes the global scope. for example:
+
+<pre><code>a = 10;
+b = 20;
+printf( SomeFunction(a + b) );
+
+unit SomeFunction(c)
+{
+   return c + 30;
+}
+</pre></code>
+
+When loaded, that program will set a=10 and b=20 and then output "60"
+since the global scope is run. It will also prepare the unit
+"SomeFunction" to be called later from
+<a href="#Callisto_execute"><code>Callisto_execute</code></a>
+
+<hr><h1><a name="Building">3.0 Building</a></h1>
+
+Download and compile the code. For linux this should just be running
+'make' at the root level there is also a Visual Studio 2017 project.
+
+<p>
+This will produce the callisto library and a command-line executable
+that implements it. for linux the library is lib/libcallisto.a
+
+<hr><h2><a name="Embedding">3.1 Embedding</a></h2>
+
+The whole point of this is to be embedded, the process is as
+simple and painless as I could make it.
+
+<p>
+Add include/callisto.h to your compilation path, link to the
+static library lib/libcallisto.a (linux) or
+VS2017/[Debug | Release | x64/Debug | x64/Release]/libcallisto.lib and that's it.
+
+<p>
+To compile the code yourself or add it directly to a project, the
+entire project (minus the callisto.h) is located in source/* and
+should be compilable by any c++ compiler.
+
+<p>
+once that is done a callisto instance can be set up
+
+<pre><code>char sampleProgram[]="print(\"hello world!\\n\");";
+
+Callisto_Context *C = Callisto_createContext(); // create a context
+
+Callisto_importStdlib( C ); // optional
+
+Callisto_ExecutionContext* ex = Callisto_createExecutionContext( C ); // create an execution thread
+if ( Callisto_load(ex, sampleProgram) ) // this will compile/run the program
+{
+	printf( "Could not open for execute [%s] err[%d]\n", argv[2], Callisto_lastErr() ); 
+}
+
+Callisto_destroyContext( C ); 
+</pre></code>
+
+
+<hr><h1><a name="Getting Started">4.0 Getting Started</a></h1>
+
+<p>
+A callisto program has automatic "global" scope, in fact the entire
+program is treated as a single "unit" object which is executed as it's own constructor.
+
+<p>
+Which is to say, when a program is loaded, it is also run in order to
+construct itself. Example:
+
+<pre><code>
+a = 10;
+b = 20;
+
+unit doSomeWork( onVariable )
+{
+   return onVariable * 10;
+}
+</pre></code>
+
+When that code is loaded it is automatically run to establish the symbol
+<code>a</code> and <code>b</code> equal to 10 and 20 respectively. The
+unit <code>doSomeWork</code> is defined and has no immediate
+effect. However in the the following example it would be called:
+
+<pre><code>
+a = 10;
+b = 20;
+b = doSomeWork( a ); // WILL be called when loaded!
+
+unit doSomeWork( onVariable )
+{
+   return onVariable * 10;
+}
+</pre></code>
+
+And after that code was loaded, <code>b</code> would contain the value
+100
+
+<p>
+The command-line utility is just an implementation of <a href="#API">the API which can
+be found here</a>
+
+
+
+<hr><h1><a name="specifics">5.0 Okay Let's Talk Specifics</a></h1>
+
+Most c operators are supported and perform in their familiar way with
+the precedences defined
+<a href="https://en.cppreference.com/w/cpp/language/operator_precedence">here</a>
+<p>A not follows each operator indicating what types they can work on,
+a call with an incompatible type results in an immediate runtime error
+<pre><code>(n) : operation is allowed on null
+(i) : operation is allowed on ints
+(d) : operation is allowed on floats
+(s) : operation is allowed on strings/wstrings
+
+=    assignment (n,i,d,s)
+==   logical equal (n,i,d,s)
+!=   logical not equal (n,i,d,s)
+
+%=   mod-assign (i)
++=   add-assign (i,d,s)
+-=   subtract-assign (i,d)
+*=   multiple-assign (i,d)
+/=   devide-assign (i,d)
+|=   bitwise-OR-assign (i)
+&amp=   bitwise-AND-assign (i)
+&gt&gt=  bitwise right-shift-assign (i)
+&lt&lt=  bitwise left-shift-assign (i)
+^=   bitwise XOR-assign (i)
+
+++   pre and post increment (i,d)
+--   pre and post decrement (i,d)
+
+.    member operator (units, and all types with meta-methods defined)
+
+&gt    greater than (i,d)
+&lt    less than (i,d)
+&gt=   greater than or equal to (i,d)
+&lt=   less than or equal to (i,d)
+&amp&amp   logical AND (i)
+||   logical OR (i,d)
+!    logical NOT (n,i,d)
+
+*    multiply (i,d)
+/    divide (i,d)
++    add (i,d,s)
+-    subtract (i,d)
+%    mod (i)
+
+^    bitwise XOR (i)
+|    bitwise OR (i)
+&    bitwuse AND (i)
+&gt&gt   bitwise right shift (i)
+&lt&lt   bitwise left shift (i)
+</pre></code>
+
+literals should be familiar with the addition of binary: <em>0b</em>
+
+<pre><code>0x              hex, as in <em>0xAB23</em>
+0b              binary, as in <em>0b0100101</em>
+"string"        simple string
+L"wide string"  wide string (unicode)
+</pre></code>
+
+<hr><h2><a name="symbols">5.1 symbols</a></h2><p>
+callisto follows the same rules for symbols as c. symbols must start
+with either a letter or underscore '_' and can contain letters,
+numbers and underscores. for example these are all legal:
+<pre><code>_symbol
+symbol3
+symbol_42
+camelNotationPrefferedByAuthor
+OMGICANNOTREADTHIS
+</pre></code>
+
+These keywords may not be symbols:
+
+<pre><code>   break     case      continue  copy      default 
+   do        else      enum      false     float     
+   for       foreach   if        int       new       
+   null      NULL      return    string    switch    
+   wstring   switch    true      unit      while
+</pre></code>
+
+<hr><p><h2><a name="breakcontinue">5.2 break/continue</a></h2>
+These loop controls function as in c inside the normal looping
+structure <code>for, while, switch (break only), and do</code>.
+
+<hr><p><h2><a name="copy">5.3 copy</a></h2>
+Normally variables of type <code>string, wstring, array, and
+table</code> are passed exclusively by reference to a function, so
+operations on them in that fucntion will be reflected when it returns.
+If this is not desirable a deep copy can be made of these data
+structures using the <code>copy</code> directive. Example:
+
+<pre><code>unit incrementTable( table )
+{
+   foreach( value : table )
+   {
+	  value += 10;
+   }
+}
+
+unit incrementCopiedTable( copy table )
+{
+   foreach( value : table )
+   {
+	  value += 10;
+   }
+}
+</pre></code>
+
+After executing the first <code>incrementCopiedTable</code> the table
+passed will have 10 added to all members inside of it. In the second
+case there will be no effect, since it will be passed a
+<code>copy</code> of the table, not the original.
+
+<p>copy can be part of a unit's argument declaration, in which case
+all variables passed will be by value, or part of calling it, in which
+case only that instance will
+<pre><code>unit SomeUnit( copy Param ) {} // all params will be copied when passed
+unit SomeOtherUnit( Param ) {}
+
+SomeOtherUnit( copy SomeTable ); // will make a copy of SomeTable and call 'SomeOtherUnit' without the 'copy' it would be passed by value
+</pre></code>
+
+<hr><p><h2><a name="for">5.4 for</a></h2>
+As in c:
+
+<pre><code>for( [initial condition] ; [continue condition] ; [iteration expression] )
+{
+   // code
+}
+</pre></code>
+
+Symbols have unit-scope, ie:
+
+<pre><code>for( x=20; x<30; ++x )
+{
+   // do something
+}
+
+print(x); // x will equal 31 here
+</pre></code>
+
+
+<hr><p><h2><a name="while">5.5 while</a></h2>
+As in c:
+
+<pre><code>while( [some condition] )
+{
+   // do this
+}
+</pre></code>
+Example:
+<pre><code>face = "smile";
+
+while( face != "frown" )
+{
+   // do something that eventually results in
+   face = "frown";
+}
+</pre></code>
+
+<hr><p><h2><a name="enum">5.6 enum</a></h2>
+enums are a little more strict than c, closer to c++ but declaration
+is straightforward:
+<pre><code>enum NameOfEnum
+{
+   enum1 = 23,  // = 23 (or any value) is not required, but will reset the count from that point on
+   enum2, // will equal 24
+   enum3, // will equal 25
+   enum4, // etc...
+}</pre></code>
+When used they must be fully qualified, ie:
+<pre><code>val = NameOfEnum::enum1;
+printf( "value is: %d", NameOfEnum::enum2 );
+</pre></code>
+Enums are always the <em>integer</em> type.
+
+
+
+<hr><p><h2><a name="foreach">5.7 foreach</a></h2>
+This primitive allows iteration through the container types of
+callisto: arrays, tables, wide and regular strings. <em>note</em> for
+tables the iteration order is not guaranteed
+<pre><code>someArray = ["one", "two", "three", "four"];
+foreach( value, key : someArray ) // choose any two symbols
+{
+   // inside the loop value will equal "one", then "two" then "three", etc...
+   // key will equal 0, 1, 2, etc..
+}
+
+someArray = ["one", "two", "three", "four"];
+foreach( value : someArray ) // choose any two symbols
+{
+   // inside the loop value will equal "one", then "two" then "three", etc...
+}
+
+someArray = ["one", "two", "three", "four"];
+foreach( value, key : someArray ) // choose any two symbols
+{
+   // inside the loop value will equal "one", then "two" then "three", etc...
+   // key will equal 0, 1, 2, etc..
+}
+
+someTable = ["key":"one", 2:"two", 32:"three", "another":"four"];
+foreach( value, key : someArray ) // choose any two symbols
+{
+   // inside the loop value will equal "one", then "two" then "three", etc...
+   // key will equal "key", 2, 32, etc..
+}
+</pre></code>
+
+
+<hr><p><h2><a name="switch">5.8 switch</a></h2>
+Works the same as in c, including fall-through.
+
+<pre><code>a = 5;
+switch( a )
+{
+   case 1: // do something
+	  break;
+
+   case 2:
+	  // do something and then fall through
+   case 3:
+	  // do this too
+	  break;
+
+   case 4:
+   {
+	  // brakets are okay
+	  break;
+   }
+
+   default:
+   {
+	  // default case
+	  break;
+   }
+}
+</pre></code>
+
+
+
+
+<hr><p><h2><a name="do">5.9 do</a></h2>
+As in c:
+
+<pre><code>do
+{
+   // do this
+} while ( [some condition] );
+</pre></code>
+
+
+
+
+
+
+<hr><p><h2><a name="ifelse">5.10 if/else</a></h2>
+As in c:
+<pre><code>if ( [some condition] )
+{
+   // do this
+}
+else if ( [some other condition] )
+{
+   // this
+}
+</pre></code>
+
+
+
+
+
+
+
+<hr><p><h2><a name="ret">5.11 return</a></h2>
+as in c, can return a value from anywhere inside a unit. If a return
+is not supplied a 'null' will automatically be returned.
+
+<pre><code>retv = "return this string";
+return retv; // will return the string
+return "anything"; // of course literals are okay too
+</pre></code>
+
+
+
+
+<hr><p><h2><a name="new">5.12 new</a></h2>
+Create an instance of a unit. This will run all the parent units in
+order with whatever arguments are passed, then the child. Currently
+the result of a new must be assigned to a symbol (the return value is
+unavailable)
+<pre><code>
+unit Parent()
+{
+   p = 10;
+
+   unit Child( val )
+   {
+      c = val;
+	  return c;
+   }
+}
+
+someSymbol = new Parent::Child( 22 );
+// "someSymbol" is now a reference to an instance such that:
+someSymbol.p == 10;
+someSymbol.c == 22;
+</pre></code>
+Memory is automatically cleaned up.
+
+
+
+<hr><p><h2><a name="casting">5.13 Type casting</a></h2>
+as in c, if a value needs to be converted from one type to another the
+conversion can be made explicit with the () operator valid casts are:
+<pre><code>(int)
+(float)
+(string)
+(wstring)
+</pre></code>
+
+Example:
+<pre><code>a = 10;
+b = "144";
+
+(int)b == 144;
+(string)a == "10";
+</pre></code>
+
+
+
+
+<hr><p><h2><a name="strings">5.14 strings</a></h2>
+Here c is departed from in favor of the traditional abstraction
+scripting languages tend to offer, and callisto is no different.
+Strings are nativly handled as character or unicode strings, and have
+a special set of operators associated with them [TODO]
+
+<p><h2><a name="stringadd">5.14.1 concatenation</a></h2>
+standard quote-aggregation is supported, as in
+<pre><code>"this" "and this"</pre></code>
+Will result in a single literal string "thisand this"
+<pre><code>a = "some string";
+b = "some other string";
+
+a + b == "some stringsome other string";</pre></code>
+
+
+<hr><h1><a name="API">6.0 API</a></h1>
+
+
+<ul>
+<li><a href="#Callisto_CallbackFunction"><code>Callisto_CallbackFunction</code></a>
+<li><a href="#Callisto_Context"><code>Callisto_Context</code></a>
+<li><a href="#Callisto_createContext"><code>Callisto_createContext</code></a>
+<li><a href="#Callisto_createExecutionContext"><code>Callisto_createExecutionContext</code></a>
+<li><a href="#Callisto_DataType"><code>Callisto_DataType</code></a>
+<li><a href="#Callisto_destroyContext"><code>Callisto_destroyContext</code></a>
+<li><a href="#Callisto_destroyExecutionContextt"><code>Callisto_destroyContext</code></a>
+<li><a href="#Callisto_Error"><code>Callisto_Error</code></a>
+<li><a href="#Callisto_execute"><code>Callisto_execute</code></a>
+<li><a href="#Callisto_ExecutionContext"><code>Callisto_ExecutionContext</code></a>
+<li><a href="#Callisto_FunctionEntry"><code>Callisto_FunctionEntry</code></a>
+<li><a href="#Callisto_getStringArg"><code>Callisto_getStringArg</code></a>
+<li><a href="#Callisto_getWStringArg"><code>Callisto_getWStringArg</code></a>
+<li><a href="#Callisto_getIntArg"><code>Callisto_getIntArg</code></a>
+<li><a href="#Callisto_getFloatArg"><code>Callisto_getFloatArg</code></a>
+<li><a href="#Callisto_getArgType"><code>Callisto_getArgType</code></a>
+<li><a href="#Callisto_getUserData"><code>Callisto_getUserData</code></a>
+<li><a href="#Callisto_getNumberOfArgs"><code>Callisto_getNumberOfArgs</code></a>
+<li><a href="#Callisto_import"><code>Callisto_importFunction</code></a>
+<li><a href="#Callisto_importList"><code>Callisto_importList</code></a>
+<li><a href="#Callisto_lastErr"><code>Callisto_lastErr</code></a>
+<li><a href="#Callisto_load"><code>Callisto_load</code></a>
+<li><a href="#Callisto_loadFile"><code>Callisto_loadFile</code></a>
+<li><a href="#Callisto_Handle"><code>Callisto_Handle</code></a>
+<li><a href="#Callisto_EMPTY_HANDLE"><code>Callisto_EMPTY_HANDLE</code></a>
+<li><a href="#Callisto_createValue"><code>Callisto_createValue</code></a>
+<li><a href="#Callisto_setValue"><code>Callisto_setValue</code></a>
+<li><a href="#Callisto_arrays"><code>Callisto Array Functions</code></a>
+<li><a href="#Callisto_tables"><code>Callisto Table Functions</code></a>
+<li><a href="#Callisto_releaseValue"><code>Callisto_releaseValue</code></a>
+</ul>
+
+
+
+<hr><h3><a name="Callisto_CallbackFunction"><code>Callisto_CallbackFunction</code></a></h3><p>
+<pre><code>Callisto_Handle f( Callisto_FunctionContext *F );</code></pre>
+<code>typedef</code> defining the callisto callback function template.
+This defines a function taking a single parameter
+<a href='#Callisto_ExecutionContext'>Callisto_ExecutionContext</a> and
+returning a handle representing a return value constucted with
+callisto's <a href="#Callisto_createValue">internal value creation
+API</a>
+
+
+typedef defining the callisto callback functions expected through the
+<a href="#Callisto_import"><code>Callisto_import</code></a> call,
+corresponds to a function of the type:
+
+
+
+<hr><h3><a name="Callisto_Context"><code>Callisto_Context</code></a></h3><p>
+Opaque type representing an execution state and all unit data
+
+
+
+
+<hr><h3><a name="Callisto_createContext"><code>Callisto_createContext</code></a></h3><p>
+<pre><code>Callisto_Context* Callisto_createContext();</pre></code>
+<p>create and return a new <a href="#Callisto_Context"><code>Callisto_Context</code></a> object.
+<a href="#Callisto_destroyContext"><code>Callisto_destroyContext</code></a>
+must be called on it to clean up any allocated memory, this will also
+clean up any
+<a href="#Callisto_createExecutionContext"><code>Callisto_createExecutionContext</code></a>
+that were created with it.
+
+
+
+
+
+<hr><h3><a name="Callisto_createExecutionContext"><code>Callisto_createExecutionContext</code></a></h3><p>
+<pre><code>Callisto_ExecutionContext* Callisto_createExecutionContext( Callisto_Context* C );</pre></code>
+Create and initialize a new execution context. This context will be
+cleaned up when the
+<a href="#Callisto_Context"><code>Callisto_Context</code></a> is
+destroyed. This object is used to invoke units, and is passed to any
+callbacks.
+
+
+
+
+
+
+<hr><h3><a name="Callisto_DataType"><code>Callisto_DataType</code></a></h3><p>
+<p>callisto data types passed as arguments in a
+<a href="#Callisto_FunctionEntry"><code>Callisto_FunctionEntry</code></a>
+object.
+<pre><code>   CTYPE_NULL
+   CTYPE_INT
+   CTYPE_FLOAT
+   CTYPE_STRING
+   CTYPE_WSTRING
+   CTYPE_UNIT
+   CTYPE_TABLE
+   CTYPE_ARRAY
+</pre></code>
+
+
+
+<hr><h3><a name="Callisto_destroyContext"><code>Callisto_destroyContext</code></a></h3><p>
+<pre><code>void Callisto_destroyContext( Callisto_Context* C );</pre></code>
+<p>destroy a <a href="#Callisto_Context"><code>Callisto_Context</code></a> object
+
+
+
+
+<hr><h3><a name="Callisto_Error"><code>Callisto_Error</code></a></h3>
+<pre><code>   CE_NoError = 0,
+   CE_FileErr = -1,
+   CE_DataErr = -2,
+   CE_BadVersion = -3,
+   CE_ThreadNotFound = -4,
+   CE_UnitNotFound = -5,
+   CE_ParentNotFound = -6,
+   CE_IncompatibleDataTypes = -7,
+   CE_StackedPostOperatorsUnsupported = -8,
+   CE_AssignedValueToStack = -9,
+   CE_UnhashableDataType = -10,
+   CE_TryingToAccessMembersOfNonUnit = -11,
+   CE_MemberNotFound = -12,
+   CE_TypeCannotBeIterated = -13,
+   CE_UnrecognizedByteCode = -14,
+</pre></code>
+callisto error return types. These returns tell a bit more about what
+happened with an API call that has failed. All of these are fatal.
+
+
+
+
+
+<hr><h3><a name="Callisto_execute"><code>Callisto_execute</code></a></h3><p>
+<code><pre>int Callisto_execute( Callisto_Context *C, const char* unitName, const Callisto_Handle argument );</pre></code>
+<p>call the given unit name from the
+<a href="#Callisto_Context"><code>Callisto_Context</code></a>, if
+loaded. The argument will be passed but ownership remains with the
+caller: <em>it must still be cleaned up with
+   <a href="#Callisto_releaseValue">Callisto_releaseValue</a></em>
+
+
+
+<hr><h3><a name="Callisto_ExecutionContext"><code>Callisto_ExecutionContext</code></a></h3><p>
+Opaque type which defines a thread of execution. This context will
+be passed to any callbacks from the engine. Multiple can be created
+[ TODO: and will execute with round-robin scheduling when calling
+xxxx ]
+
+
+
+
+
+<hr><h3><a name="Callisto_FunctionEntry"><code>Callisto_FunctionEntry</code></a></h3><p>
+<pre>struct Callisto_FunctionEntry
+{
+   const char* symbol;
+   Callisto_CallbackFunction function;
+   void* userData;
+};
+</pre>
+<a>structure callisto uses to define external functions thare are
+being installed into a
+<a href="#Callisto_Context">Callisto_Context</a> object. see
+<a href="#Callisto_import">Callisto_import</a> for details.
+
+
+
+
+
+<hr><h3><code>Callisto Parameter Access</code></h3><p>
+
+<ul>
+<li><a name="Callisto_getStringArg">Callisto_getStringArg</a>
+<li><a name="Callisto_getWStringArg">Callisto_getWStringArg</a>
+<li><a name="Callisto_getIntArg">Callisto_getIntArg</a>
+<li><a name="Callisto_getFloatArg">Callisto_getFloatArg</a>
+<li><a name="Callisto_getUserData">Callisto_getUserData</a>
+<li><a name="Callisto_getArgType">Callisto_getArgType</a>
+<li><a name="Callisto_getNumberOfArgs">Callisto_getNumberOfArgs</a>
+</ul>
+<pre><code>const char* Callisto_getStringArg( Callisto_ExecutionContext* E, const int argNum, char* data =0, unsigned int* len =0 );
+const wchar_t* Callisto_getWStringArg( Callisto_ExecutionContext* E, const int argNum, wchar_t* data =0, unsigned int* len =0 );
+int64_t Callisto_getIntArg( Callisto_ExecutionContext* E, const int argNum );
+double Callisto_getFloatArg( Callisto_ExecutionContext* E, const int argNum );
+void* Callisto_getUserData( Callisto_ExecutionContext* E );
+const unsigned int Callisto_getNumberOfArgs( Callisto_ExecutionContext* E );
+</pre></code>
+These functions are used by callisto callbacks (see
+<a href="#Callisto_import">Callisto_import</a>) to access the data
+that was passed to it.
+
+<p><em>E</em> opaque pointer to the
+<a href='#Callisto_ExecutionContext'>Callisto_ExecutionContext</a>
+that was passed to the callback.
+
+<p><em>argNum</em> What argument number is requested
+
+<p><em>data/len</em> buffer to store the resulting string,
+<em>len</em> must be loaded with the maximum buffer size <em>data</em>
+can store, including terminator. It's value will be changed to reflect
+how much data was actually copied in. If these are provided, callisto
+will return them. If NOT then the internal string buffer will be
+passed back (do not store this pointer).
+<p><em>NOTE</em>: If the argument is not a string type, but the data/len
+are provided, callisto will format the value into the string
+otherwise null will be passed back.
+<p><em>NOTE</em>: Callisto_getUserData returns the data that was supplied
+to <a href="#Callisto_import">Callisto_import</a> for this function.
+<p>it is strongly advised to use Callisto_getArgType and
+Callisto_getNumberOfArgs to validate the input.
+
+
+
+
+
+<hr><h3><a name="Callisto_import"><code>Callisto_importList</code></a></h3><p>
+<pre>void Callisto_importList( Callisto_Context* C, const Callisto_FunctionEntry* entries, const int numberOfEntries );
+void Callisto_importFunction( Callisto_Context* C, const char* label, Callisto_CallbackFunction function, void* userData =0 );</pre>
+<p>Import a single or list of c functions (of type
+<a href="#Callisto_FunctionEntry"><code>Callisto_FunctionEntry</code></a>) to expose to the global namespace in
+the given context. The userdata will be passed in to each call
+opaquely. ex:
+<pre><code>
+Callisto_Handle func1function( Callisto_FunctionContext* F )
+{
+   // do something
+}
+
+Callisto_Handle func2function( Callisto_FunctionContext* F )
+{
+   // do something else
+}
+
+// list of names, functions and userData
+const Callisto_FunctionEntry functionList[]=
+{
+	{ "func1name", func1function, 0 },
+	{ "func2name", func2function, 0 },
+};
+
+// function called to import the above list
+void importFunctions()
+{
+   Callisto_importList( C, functionList, 2 );
+}
+</pre></code>
+
+
+
+<hr><h3><a name="Callisto_lastErr"><code>Callisto_lastErr</code></a></h3><p>
+<pre><code>const int Callisto_lastErr();</pre></code>
+<p>return the last error that was generated by a Callisto_* call.
+Returns <a href="#Callisto_Error"><code>Callisto_Error</code></a> and
+can be made human readable with
+<a href="#Callisto_formatError"><code>Callisto_formatError</code></a>.
+
+
+
+
+<hr><h3><a name="Callisto_load"><code>Callisto_load</code></a></h3><p>
+<pre><code>int Callisto_load( Callisto_Context *C, const char* data, const unsigned int len =0 );</pre></code>
+<p>Load a callisto program into the given context
+<p>If callisto detects that it is byte code it will execute the global
+scope, otherwise it will call
+<a href="#Callisto_parse"><code>Callisto_parse</code></a> on it first.
+
+
+
+
+<hr><h3><a name="Callisto_loadFile"><code>Callisto_loadFile</code></a></h3><p>
+<pre><code>int Callisto_loadFile( Callisto_Context *C, const char* fileName );</pre></code>
+<p>Load file pointed to by <ex>fileName</em> then call
+<a href="#Callisto_load"><code>Callisto_load</code></a> on the data.
+
+
+
+
+
+<hr><h3><a name="Callisto_Handle"><code>Callisto_Handle</code></a></h3><p>
+defines the callisto handle type used in the value managing functions.
+
+
+
+<hr><h3><a name="Callisto_EMPTY_HANDLE"><code>Callisto_EMPTY_HANDLE</code></a></h3><p>
+<pre><code>#define Callisto_EMPTY_HANDLE 0</pre></code>
+What to return from callbacks that have no value to return. Will
+always be zero but this looks more official.
+
+
+<hr><h3><a name="Callisto_createValue"><code>Callisto_createValue</code></a></h3><p>
+<code><pre>const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E ); // creates a NULL value
+const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E, int64_t i );
+const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E, double d );
+const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E, const char* string, const int len );
+const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E, const wchar_t* string, const int len );</pre></code>
+
+These overloaded functions used to create values that can be passed to
+callisto either as arguments to
+<a href="#Callisto_execute"><code>Callisto_execute</code></a> or as
+return values from a callback.
+
+<p>Handles created this way must be freed with
+<a href="#Callisto_releaseValue"><code>Callisto_releaseValue</code></a>
+unless they are loaded into another handle( as an array or table) or
+passed back from a callback.
+
+<p>If a Callisto_Handle is passed back from a callback it
+does NOT need to be released, the array owns it and it will be freed
+when the array is
+
+
+
+
+<hr><h3><a name="Callisto_setValue"><code>Callisto_setValue</code></a></h3><p>
+<code><pre>int Callisto_setValue( Callisto_ExecutionContext* E, const Callisto_Handle loadToHandle, const int64_t i );
+int Callisto_setValue( Callisto_ExecutionContext* E, const Callisto_Handle loadToHandle, const double d );
+int Callisto_setValue( Callisto_ExecutionContext* E, const Callisto_Handle loadToHandle, const char* string, const int len =0 );
+int Callisto_setValue( Callisto_ExecutionContext* E, const
+Callisto_Handle loadToHandle, const wchar_t* string, const int len =0 );</pre></code>
+
+These overloaded functions load a value into the given handle, return
+is '0' on success or returns the error. 
+
+
+
+<hr><h3><a name="Callisto_arrays"><code>Callisto Array Functions</code></a></h3><p>
+<code><pre>int Callisto_setArrayValue( Callisto_ExecutionContext* E, const Callisto_Handle handleOfArray, const int index, const Callisto_Handle handleOfData );
+int Callisto_addArrayValue( Callisto_ExecutionContext* E, const Callisto_Handle handleOfArray, const Callisto_Handle handleOfData );
+int Callisto_getArrayCount( Callisto_ExecutionContext* E, const Callisto_Handle handleOfArray );
+int Callisto_getArrayValue( Callisto_ExecutionContext* E, const int index );</code></pre>
+Calling <code>Callisto_setArrayValue</code> or
+<code>Callisto_addArrayValue</code> on a handle
+that is NOT an array will cause it to become a new array with that
+value loaded in at the specified index.
+
+Any array value can be chosen, in the case of a sparse
+array the missing elements will be populated with NULL objects
+
+Any array value can be chosen, in the case of a sparse
+array the missing elements will be populated with NULL objects
+
+Once a handle is added to an array it is then owned by
+the array and does not need to be cleaned up with <a href="#Callisto_releaseValue"><code>Callisto_releaseValue</code></a>
+
+
+
+<hr><h3><a name="Callisto_tables"><code>Callisto Table Functions</code></a></h3><p>
+<code><pre>int Callisto_setTableValue( Callisto_ExecutionContext* E, const Callisto_Handle handleOfTable, const Callisto_Handle handleOfKey, const Callisto_Handle handleOfData );
+int Callisto_getTableCount( Callisto_ExecutionContext* E, const Callisto_Handle handleOfTable );
+int Callisto_getTableValue( Callisto_ExecutionContext* E, const Callisto_Handle handleOfArray, const Callisto_Handle handleOfKey );</code></pre>
+Calling <code>Callisto_setTableValue</code> or
+<code>Callisto_addTableValue</code> on a handle
+that is NOT a table will cause it to become a new Table with that
+value loaded in at the specified index.
+
+Once a handle is added to a table it is then owned by
+that table and does not need to be cleaned up with
+<a href="#Callisto_releaseValue"><code>Callisto_releaseValue</code></a>.
+the same goes for the handle of the key.
+
+The only values which can be used as keys are "hashable" values:
+<code><pre>integer
+float
+string
+wstring
+</code></pre>
+
+
+
+
+
+<hr><h3><a name="Callisto_releaseValue"><code>Callisto_releaseValue</code></a></h3><p>
+<code><pre>void Callisto_releaseValue( Callisto_ExecutionContext* E, const Callisto_Handle handle );</pre></code>
+Releases a handle, freeing any allocated memory, this <em>must be
+called</em> on any value created with a 'create' flavor of call,
+unless that value was added to an array or table (they take ownership
+and handle cleanup)
+
+
+<h2><a name="callbacks">6.1 Callbacks</a></h2>
+
+One of the primary use-cases for callisto is integrating it into an
+existing project to give it scripting functionality. For this reason
+the vm is kept small and portable and distributed in source form.
+
+<p>In addition, the language is very easy to extend and invoke
+callbacks for. Here is a quick example:
+
+<p>In this application we want to control a door based on scripted
+logic. First the callisto engine is initialized with something like
+the following:
+
+
+<code><pre>   Callisto_Context* C = Callisto_createContext();
+   Callisto_importStdlib( C );
+   Callisto_ExecutionContext* E = Callisto_createExecutionContext( C );
+</code></pre>
+
+
+<p>The callisto logic will be a simple check based on who tries to
+open it. For this we create three callback functions:
+<code>checkDoorLock()</code>, <code>openDoor()</code>, and
+<code>soundAlarm()</code>. In addition a
+callisto unit for the c program to call, passing
+in who tried it
+<code>unit requestOpen( who )</code> so lets load those callbacks into
+callisto with
+<a href="#Callisto_import"><code>Callisto_import</code></a>:
+
+<pre><code>Callisto_Handle openDoor( Callisto_ExecutionContext* E )
+{
+   doSomeOpenDoorCall(); // whatever c-call is needed
+   return Callisto_EMPTY_HANDLE; 
+}
+
+Callisto_Handle checkDoorLock( Callisto_ExecutionContext* E )
+{
+   return Callisto_createValue( E, someGlobalVariable );
+}
+
+Callisto_Handle soundAlaram( Callisto_ExecutionContext* E )
+{
+   if ( Callisto_getArgType(E, 0) == CTYPE_STRING )
+   {
+      cFunctionToSoundTheAlarm( Callisto_getStringArg(E, 0) ); // expects a string
+   }
+   else
+   {
+	  errorLog("Callisto called with a non string arg! panic!");
+   }
+
+   return Callisto_EMPTY_HANDLE;
+}
+
+const Callisto_FunctionEntry doorFuncs[]=
+{
+   { "openDoor", openDoor, 0 },
+   { "checkDoorLock", checkDoorLock, 0 },
+   { "soundAlarm", soundAlarm, 0 },
+};
+
+Callisto_import( C, doorFuncs, 3 );
+</pre></code>
+
+<p>The callisto program:
+
+<pre><code>// door-check algorithm
+unit requestOpen( who )
+{
+   locked = checkDoorLock();
+   if ( locked == 0 ) // if it's not locked anyone can enter
+   {
+     openDoor();
+   }
+   else if ( who == "burgler" ) // otherwise maybe check to see who it is!
+   {
+     soundAlarm( who );
+   }
+}
+</pre></code>
+So the c program can now execute the callisto unit with the following:
+
+<pre><code>Callisto_execute( E, "requestOpen", Callisto_createValue(E, "some char variable") )
+</pre></code>
+
+And it will handle the rest. In this way the c code need not be
+modified to change functionality.
+
+<h1><a name="metamethods">6.2 Meta Methods</a></h1>
+
+Meta Methods are methods that are invoked from a variable and look
+like functions but have a single important difference: the first
+argument is always the variable itself. The tables are loaded per
+type. For example when <code>Callisto_importString()</code> is called
+
+
+<h1><a name="standardlibraries">6.3 Standard Libraries</a></h1>
+
+Some standard libraries are included in callisto, they implement some
+common functionality the many programs will find useful. They are
+implemented through the same API described here.
+
+<p>example
+<code><pre>s = "  this is a string ";
+s.trim(); // 'w' will now equal "this is a string"</code></pre>
+
+
+<ul>
+   <li><code>Callisto_importStdlib( Callisto_Context *C)</code>
+   <ul>
+	  <li>printf( "format", ... ) // c-like printf functionality using %s, %d, etc..
+	  <li>printl(...) // prints the arguments in order, followed by a newline (\n
+	  <li>getline() // prompt use for input, returns a string
+	  <li>random( from, to ) // returns random number from/to inclusive
+   </ul>
+   <li><code>Callisto_importString( Callisto_Context *C)</code>
+   <ul>
+	  <li>trim() // eliminate leading and trailing whiter sapce
+	  <li>split( delimeter ) // split a string with optional delimeter
+(if not specified, whitespace is used) an array is returned
+   </ul>
+</ul>
+
+
+<h1><a name="downloads">7.0 Downloads</a></h1>
+
+Latest
+<a href="http://northarc.com/callisto/callisto-0.1.2.zip">Version v0.1.2</a>
+
+
+<h1><a name="contributing">8.0 Contributing</a></h1>
+I intend this to be a useful tool, and am therefore releasing
+everything and only ask that if bugs or improvements are found/created
+that I be notified so I can include them in the general distribution
+
+<p>
+I strongly encourage the community to help me in this regard, and
+fully expect the internet to kick my butt for trying this.
+
+<h1><a name="Contact">9.0 Contact</a></h1>
+This software is my original work, please feel free to
+contact me with questions/comments/contributions as noted above:
+curt.hartung@gmail.com
+
+</body></html>
+

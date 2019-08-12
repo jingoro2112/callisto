@@ -1,0 +1,74 @@
+v0.1.2 ----------------------------------------------- [dev]
+- first implementation attempt at multi-threaded round-robin scheduler
+  This is normally not a language spec, but I am implementing it
+  directly into the vm to fullfil one of the main use-cases which is small
+  programs that run occasionally for game-type logic. The round-robin
+  scheduling is a cooperative multi-tasking and adds the keywords
+  'yield' and 'wake'. Normally in this sort of system values/messages
+  can be passed between threads and threads are 'aware' of each other.
+ 
+  That turns into a large body of API very VERY quickly, and I am going
+  to try and keep away from that as much as possible by putting that logic
+  into user space. When a thread 'yields' you can register for callback
+  and 'wake' another thread any time in two ways: wake 'normal'
+  or wake 'now'
+
+v0.1.1 -----------------------------------------------
+- added ability to pass an argument into an execute (it will always be an array called "_argv")
+- unified value creation/handling making the process more opaque and controlled. Also
+  more useful across meta-method boundaries (no longer return values, now all handles)
+- looked into reddit leanguages group and got really intimidated, maybe not time to tell
+  them about this
+- fixed BIG bug: function return values could not be used as values in expressions
+- streamlined argument-parsing de-specializing that code
+- fixed stack-growth problem
+- made sure return values are deep-copied out of their local namespace onto the stack [test 17]
+- added Callisto_Handle type
+- added new API methods:
+
+   const Callisto_Handle Callisto_createValue( Callisto_Context* C );
+   const Callisto_Handle Callisto_createValue( Callisto_Context* C, int64_t i );
+   const Callisto_Handle Callisto_createValue( Callisto_Context* C, double d );
+   const Callisto_Handle Callisto_createValue( Callisto_Context* C, const char* string, const int len );
+   const Callisto_Handle Callisto_createValue( Callisto_Context* C, const wchar_t* string, const int len );
+   int Callisto_setValue( Callisto_Context* C, const Callisto_Handle setOnHandle, int64_t i );
+   int Callisto_setValue( Callisto_Context* C, const Callisto_Handle setOnHandle, double d );
+   int Callisto_setValue( Callisto_Context* C, const Callisto_Handle setOnHandle, const char* string, const int len );
+   int Callisto_setValue( Callisto_Context* C, const Callisto_Handle setOnHandle, const wchar_t* string, const int len );
+
+   int Callisto_setArrayValue( Callisto_Context* C,
+                               const Callisto_Handle handleOfArray,
+                               const int index,
+                               const Callisto_Handle handleOfData );
+
+   int Callisto_setTableValue( Callisto_Context* C,
+                               const Callisto_Handle handleOfTable,
+                               const Callisto_Handle handleOfKey,
+                               const Callisto_Handle handleOfData );
+
+   void Callisto_releaseValue( Callisto_Context* C, const Callisto_Handle handle );
+
+- added documentation for new methods
+- added table of contents for API section
+- added type-allowed information to the operator list
+- literal ints are loaded by size, optimized for 8, 16 32 and 64 bits
+  to save code space
+- jump vectors are always relative, so callisto byte-code is
+  now 100% relocatable. This will be important for importing libraries
+  at runtime
+- pre-compute literals that have pre-operators
+- added test_14
+- fixed parsing problem with 64-bit literal 0x8000000000000000 
+  expressed as "-9223372036854775808"
+- added operators: & | ~ ^ &= |= ^= << >> <<= >>=
+  valid only for integer types
+- fixed manual errors
+- added initial meta-table implementation
+- changed Callisto_getStringArg() to be a bit more useful
+- fixed 'execute' function to actually work
+- added hashtable.hpp to save memory and a bit of CPU on lists that never need
+  to be iterated
+- added CHANGELIST.TXT
+
+v0.1.0 -----------------------------------------------
+- Initial release. It's buggy but it lives!
