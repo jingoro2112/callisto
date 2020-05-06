@@ -1,8 +1,11 @@
-#include "util.h"
-#include "asciidump.hpp"
+#include "cc.h"
+#include "asciidump.h"
 #include "arch.h"
+#include "utf8.h"
 
 #include <ctype.h>
+
+#define D_DUMP_BYTECODE(a) //a
 
 #define D_JUMP(a) //a
 #define D_ENUM(a) //a
@@ -20,9 +23,16 @@
 #define D_IFCHAIN(a) // a
 #define D_PARSE_NEW(a) //a
 #define D_SWITCH(a) //a
+#define D_OPTIMIZE(a) //a
 
 extern CLog Log;
 unsigned int Compilation::jumpIndex = 1;
+
+template<> CObjectTPool<CLinkHash<LinkEntry>::Node> CLinkHash<LinkEntry>::m_linkNodes(0);
+template<> CObjectTPool<CLinkHash<bool>::Node> CLinkHash<bool>::m_linkNodes(0);
+template<> CObjectTPool<CLinkHash<unsigned int>::Node> CLinkHash<unsigned int>::m_linkNodes(0);
+template<> CObjectTPool<CLinkHash<int>::Node> CLinkHash<int>::m_linkNodes(0);
+template<> CObjectTPool<CLinkHash<Cstr>::Node> CLinkHash<Cstr>::m_linkNodes(0);
 
 //------------------------------------------------------------------------------
 void CCloggingCallback( const char* msg )
@@ -33,11 +43,204 @@ void CCloggingCallback( const char* msg )
 bool processSwitchContexts( Compilation& target, UnitEntry& unit );
 bool parseBlock( Compilation& target, UnitEntry& unit, SwitchContext *sc =0, Cstr* preload =0 );
 bool link( Compilation& target );
-bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token, Value& value );
-bool parseConstExpression( Compilation& comp, ExpressionContext& context, Cstr& token, Value& value );
+bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token, CToken& CToken );
+bool parseConstExpression( Compilation& comp, ExpressionContext& context, Cstr& token, CToken& CToken );
+bool g_addDebugSymbols = false;
 
 unsigned int flatHash = 0;
-CLinkHash<unsigned int> hashMap;
+
+//------------------------------------------------------------------------------
+void emitDebug( ExpressionContext& context, unsigned int offset )
+{
+	static unsigned int last = 0;
+	
+	if ( !g_addDebugSymbols || (offset == last) )
+	{
+		return;
+	}
+
+	last = offset;
+
+	context.bytecode += O_SourceCodeLineRef;
+	int32_t be = htonl( offset );
+	context.bytecode.append( (char*)&be, 4 );
+	
+	context.history.clear();
+}
+
+//------------------------------------------------------------------------------
+const Cstr& formatToken( CToken const& token )
+{
+	static Cstr ret;
+	switch( token.type )
+	{
+		case CTYPE_NULL: return ret.format("NULL");
+		case CTYPE_INT: return ret.format( "%lld",  token.i64 );
+		case CTYPE_FLOAT: return ret.format( "%g", token.d );
+		case CTYPE_STRING: return ret = token.string;
+		default: return ret = "<UNRECOGNIZED TYPE>";
+	}
+}
+
+//------------------------------------------------------------------------------
+void addOpcode( Cstr& bytecode, Cstr& history, char opcode )
+{
+	if ( history.size() <= 0 )
+	{
+		bytecode += opcode;
+		history += opcode;
+		return;
+	}
+	
+	char last = history[ history.size() - 1 ];
+
+	if ( opcode == O_PopOne )
+	{
+		switch( last )
+		{
+			case O_PopOne:
+			{
+				bytecode.shave(1);
+				history.shave(1);
+				bytecode += (char)O_PopTwo;
+				history += (char)O_PopTwo;
+				return;
+			}
+			
+			case O_Assign:
+			{
+				bytecode[ bytecode.size() - 3 ] = (char)O_AssignAndPop;
+				history.shave(1);
+				return;
+			}
+
+			case O_BinaryAddition:
+			{
+				bytecode[ bytecode.size() - 3 ] = (char)O_BinaryAdditionAndPop;
+				history.shave(1);
+				return;
+			}
+			
+			case O_BinarySubtraction:
+			{
+				bytecode[ bytecode.size() - 3 ] = (char)O_BinarySubtractionAndPop;
+				history.shave(1);
+				return;
+			}
+			
+			case O_BinaryMultiplication:
+			{
+				bytecode[ bytecode.size() - 3 ] = (char)O_BinaryMultiplicationAndPop;
+				history.shave(1);
+				return;
+			}
+			
+			case O_BinaryDivision:
+			{
+				bytecode[ bytecode.size() - 3 ] = (char)O_BinaryDivisionAndPop;
+				history.shave(1);
+				return;
+			}
+			
+			case O_BinaryMod:
+			{
+				bytecode[ bytecode.size() - 3 ] = (char)O_BinaryModAndPop;
+				history.shave(1);
+				return;
+			}
+		}
+	}
+	
+	bytecode += opcode;
+	history += opcode;
+}
+
+//------------------------------------------------------------------------------
+void addOpcode( ExpressionContext& context, char opcode )
+{
+	addOpcode( context.bytecode, context.history, opcode );
+}
+
+//------------------------------------------------------------------------------
+void addOpcode( UnitEntry& unit, char opcode )
+{
+	addOpcode( unit.bytecode, unit.history, opcode );
+}
+
+//------------------------------------------------------------------------------
+void putCToken( ExpressionContext& context, CToken& value )
+{
+	switch( value.type )
+	{
+		default:
+		case CTYPE_NULL:
+		{
+			addOpcode( context, O_LiteralNull );
+			break;
+		}
+
+		case CTYPE_INT:
+		{
+			if ( (value.i64 <= 127) && (value.i64 >= -128) )
+			{
+				addOpcode( context, O_LiteralInt8 );
+				context.history.clear();
+				addOpcode( context, (unsigned char)value.i64 );
+			}
+			else if ( (value.i64 <= 32767) && (value.i64 >= -32768) )
+			{
+				addOpcode( context, O_LiteralInt16 );
+				int16_t be = htons( (int16_t)value.i64 );
+				context.bytecode.append( (char*)&be, 2 );
+			}
+			else if ( (value.i64 <= 2147483647) && (value.i64 >= -(int64_t)2147483648) )
+			{
+				addOpcode( context, O_LiteralInt32 );
+				int32_t be = htonl( (int32_t)value.i64 );
+				context.bytecode.append( (char*)&be, 4 );
+			}
+			else
+			{
+				addOpcode( context, O_LiteralInt64 );
+				int64_t be = htonll(value.i64);
+				context.bytecode.append( (char*)&be, 8 );
+			}
+
+			context.history.clear();
+
+			break;
+		}
+
+		case CTYPE_FLOAT:
+		{
+			addOpcode( context, O_LiteralFloat );
+			int64_t be = ntohll(value.i64);
+			context.bytecode.append( (char*)&be, 8 );
+			context.history.clear();
+			break;
+		}
+
+		case CTYPE_STRING:
+		{
+			addOpcode( context, O_LiteralString );
+			putStringToCodeStream( context.bytecode, value.string );
+			context.history.clear();
+			break;
+		}
+	}
+}
+
+//------------------------------------------------------------------------------
+void putStringToCodeStream( Cstr& code, Cstr& string )
+{
+	unsigned int len = string.size();
+	unsigned int hlen = htonl(len);
+	code.append( (char*)&hlen, 4 );
+	if ( len )
+	{
+		code.append( string.c_str(), len );
+	}
+}
 
 //------------------------------------------------------------------------------
 unsigned int hash( Cstr& name, Compilation& target, bool alias =true )
@@ -96,20 +299,30 @@ char getParents( Cstr* parentBlock, Compilation& target, UnitEntry& unit, CLinkH
 }
 
 //------------------------------------------------------------------------------
-int Callisto_parse( const char* data, const int size, char** out, unsigned int* outLen )
+int Callisto_parse( const wchar_t* data, const int size, char** out, unsigned int* outLen, const bool addDebugInfo )
+{
+	Cstr utf8;
+	unicodeToUTF8( data, size, utf8 );
+	return Callisto_parse( utf8, utf8.size(), out, outLen, addDebugInfo );
+}
+
+//------------------------------------------------------------------------------
+int Callisto_parse( const char* data, const int size, char** out, unsigned int* outLen, const bool addDebugInfo )
 {
 	if ( O_LAST > 128 )
 	{
 		Log("OPCODE ERROR [%d]", O_LAST);
 		return -1000;
 	}
-		
+
+	g_addDebugSymbols = addDebugInfo;
+	
 	Cstr output;
 	
 	Log.setCallback( CCloggingCallback );
 
 	Compilation comp;
-	
+
 	comp.source.set( data, size );
 	comp.pos = 0;
 	comp.output = &output;
@@ -126,8 +339,8 @@ int Callisto_parse( const char* data, const int size, char** out, unsigned int* 
 
 	if ( ret )
 	{
-		E->program += (char)O_LiteralNull;
-		E->program += (char)O_Return;
+		addOpcode( *E, O_LiteralNull );
+		addOpcode( *E, O_Return );
 		ret = processSwitchContexts( comp, *E );
 	}
 
@@ -139,7 +352,7 @@ int Callisto_parse( const char* data, const int size, char** out, unsigned int* 
 		int onLine = 1;
 		Cstr line;
 
-		for( unsigned int p = 0; p<comp.source.size() && comp.source[p] != '\n'; p++ ) { line += comp.source[p]; }
+		for( unsigned int p = 0; p<comp.source.size() && comp.source[p] != '\n'; p++ ) { line += (char)comp.source[p]; }
 
 		for( unsigned int i=0; i<comp.pos; i++ )
 		{
@@ -149,7 +362,7 @@ int Callisto_parse( const char* data, const int size, char** out, unsigned int* 
 				onChar = 0;
 
 				line.clear();
-				for( unsigned int p = i+1; p<comp.source.size() && comp.source[p] != '\n'; p++ ) { line += comp.source[p]; }
+				for( unsigned int p = i+1; p<comp.source.size() && comp.source[p] != '\n'; p++ ) { line += (char)comp.source[p]; }
 			}
 			else
 			{
@@ -174,9 +387,9 @@ int Callisto_parse( const char* data, const int size, char** out, unsigned int* 
 	}
 
 	CodeHeader header;
-	header.version = CALLISTO_VERSION;
-	header.unitCount = comp.units.count() - 1;
-	header.firstUnitBlock = output.size();
+	header.version = htonl( CALLISTO_VERSION );
+	header.unitCount = htonl( comp.units.count() - 1 );
+	header.firstUnitBlock = htonl( output.size() );
 
 	D_CALLISTO_PARSE(Log( "complete version[0x%04X] units[%d] block[0x%08X]\n", CALLISTO_VERSION, header.unitCount, header.firstUnitBlock ));
 
@@ -189,6 +402,8 @@ int Callisto_parse( const char* data, const int size, char** out, unsigned int* 
 		output += (char)S->size();
 		output.append( S->c_str(), S->size() );
 	}
+
+	header.symbols = htonl( header.symbols );
 
 	// populate children
 	CLinkList<UnitEntry>::Iterator uiter1( comp.units );
@@ -227,11 +442,14 @@ int Callisto_parse( const char* data, const int size, char** out, unsigned int* 
 	{
 		D_CALLISTO_PARSE(Log("Unit [%s]", U->name.c_str()));
 
-		putString( output, U->name );
+		putStringToCodeStream( output, U->name );
+
 		unsigned int h = htonl( U->nameHash );
 		output.append( (char*)&h, 4 );
 		h = htonl( U->baseOffset );
 		output.append( (char *)&h, 4 );
+
+		output += (char)(U->member ? 1 : 0);
 
 		Cstr parentBlock;
 		CLinkHash<bool> parentsSeen;
@@ -283,11 +501,18 @@ int Callisto_parse( const char* data, const int size, char** out, unsigned int* 
 		}
 	}
 
-	header.CRC = hash( &header, sizeof(CodeHeader) - 4 );
+	unsigned int s = g_addDebugSymbols ? htonl( output.size() + 4 ) : 0; // +4 to skip itself
+	output.append( (char *)&s, 4 ); // if the source code is included this is where it will be located
+	if ( g_addDebugSymbols )
+	{
+		output.append( Cstr(comp.source) );
+	}
+
+	header.CRC = htonl( hash( &header, sizeof(CodeHeader) - 4 ) );
 
 	memcpy( output.p_str(), &header, sizeof(CodeHeader) );
 
-	D_CALLISTO_PARSE(asciiDump( output, output.size() ));
+	D_DUMP_BYTECODE(asciiDump( output, output.size() ));
 	
 	*outLen = output.release( out );
 
@@ -310,39 +535,12 @@ Cstr& addNamespaceTo( Compilation& comp, Cstr& label )
 }
 
 //------------------------------------------------------------------------------
-bool isValidLabel( Cstr& token, bool doubleColonOkay =false )
-{
-	if ( !token.size() || (!isalpha(token[0]) && token[0] != '_') ) // non-zero size and start with alpha or '_' ?
-	{
-		return false;
-	}
-
-	if ( isReserved(token) ) // reserved word? no go
-	{
-		return false;
-	}
-		 
-	for( unsigned int i=1; i<token.size(); i++ ) // entire token alphanumeric or '_'?
-	{
-		if ( doubleColonOkay && (token[i] == ':') )
-		{
-			++i;
-			if ( i >= token.size() || token[i] != ':' )
-			{
-				return false;
-			}
-		}
-		else if ( !isalnum(token[i]) && token[i] != '_' )
-		{
-			return false;
-		}
-	}
-
-	return true;
-}
-
-//------------------------------------------------------------------------------
-void addSymbolPlaceholder( Compilation& comp, Cstr& code, CLinkList<LinkEntry>& symbols, Cstr& token, bool addNameSpace, unsigned int enumKey )
+void addSymbolPlaceholder( Compilation& comp,
+						   Cstr& code,
+						   CLinkList<LinkEntry>& symbols,
+						   Cstr& token,
+						   bool addNameSpace,
+						   unsigned int enumKey )
 {
 	LinkEntry *L = symbols.addTail();
 
@@ -363,7 +561,8 @@ void addSymbolPlaceholder( Compilation& comp, Cstr& code, CLinkList<LinkEntry>& 
 
 	D_ADD_SYMBOL(Log("symbol placeholder plain[%s] target[%s]", L->plainTarget.c_str(), L->target.c_str()));
 
-	code += "\01\02\03\04";
+	unsigned int key = htonl(enumKey);
+	code.append( (char *)&key, 4 );
 }
 
 //------------------------------------------------------------------------------
@@ -374,11 +573,12 @@ bool loadAsEnum( Compilation& comp, ExpressionContext& context, Cstr& token )
 		return false;
 	}
 
-	context.code += (char)O_LoadEnumValue;
+	addOpcode( context, O_LiteralInt32 );
 
 	D_ENUM(Log("replaced enum literal [%s]", token.c_str()));
 	
-	addSymbolPlaceholder( comp, context.code, context.symbols, token, true, hash(token, comp) );
+	addSymbolPlaceholder( comp, context.bytecode, context.symbols, token, true, hash(token, comp) );
+	context.history.clear();
 	
 	return true;
 }
@@ -387,53 +587,74 @@ bool loadAsEnum( Compilation& comp, ExpressionContext& context, Cstr& token )
 bool loadLabel( Compilation& comp,
 				ExpressionContext& context,
 				Cstr& token,
-				Value& value,
-				bool lvalue )
+				CToken& value,
+				bool lvalue,
+				bool global )
 {
-	if ( value.type != CTYPE_NULL ) // its a literal
+	if (value.type != CTYPE_NULL ) // its a literal
 	{
 		if ( lvalue )
 		{
-			comp.err = "must be Lvalue";
+			comp.err = "must be lvalue";
 			return false;
 		}
 		
-		D_PARSE_EXPRESSION(Log("pushing literal %s", formatValue(value).c_str()));
-		putValue( context.code, value );
+		D_PARSE_EXPRESSION(Log("pushing literal %s", formatCToken(value).c_str()));
+		putCToken( context, value );
 	}
 	else if ( (token == "null") || (token == "NULL") )
 	{
 		if ( lvalue )
 		{
-			comp.err = "must be Lvalue";
+			comp.err = "must be lvalue";
 			return false;
 		}
 		
-		context.code += (char)O_LiteralNull;
+		addOpcode( context, O_LiteralNull );
 	}
 	else if ( token == "true" )
 	{
 		if ( lvalue )
 		{
-			comp.err = "must be Lvalue";
+			comp.err = "must be lvalue";
 			return false;
 		}
 
-		context.code += (char)O_LiteralInt8;
-		context.code += (char)1;
+		addOpcode( context, O_LiteralInt8 );
+		context.bytecode += (char)1;
+		context.history.clear();
 	}
 	else if ( token == "false" )
 	{
 		if ( lvalue )
 		{
-			comp.err = "must be Lvalue";
+			comp.err = "must be lvalue";
 			return false;
 		}
 
-		context.code += (char)O_LiteralInt8;
-		context.code += (char)0;
+		addOpcode( context, O_LiteralInt8 );
+		context.bytecode += (char)0;
+		context.history.clear();
 	}
-	else if ( !loadAsEnum(comp, context, token) )
+	else if ( token == "this" || (comp.currentUnit && ((token == comp.currentUnit->name))) )
+	{
+		if ( lvalue )
+		{
+			comp.err = "must be lvalue";
+			return false;
+		}
+
+		addOpcode( context, O_LoadThis );
+	}
+	else if ( loadAsEnum(comp, context, token) )
+	{
+		if ( lvalue )
+		{
+			comp.err = "must be lvalue";
+			return false;
+		}
+	}
+	else
 	{
 		if ( !isValidLabel(token) )
 		{
@@ -443,7 +664,7 @@ bool loadLabel( Compilation& comp,
 		
 		D_PARSE_EXPRESSION(Log("pushing load label [%s]", token.c_str()));
 
-		context.code += (char)O_LoadLabel;
+		addOpcode( context, global ? O_LoadLabelGlobal : O_LoadLabel );
 		unsigned int key = hash( token, comp );
 
 		if ( comp.currentUnit )
@@ -456,7 +677,8 @@ bool loadLabel( Compilation& comp,
 		}
 
 		key = htonl(key);
-		context.code.append( (char *)&key, 4 );
+		context.bytecode.append( (char *)&key, 4 );
+		context.history.clear();
 	}
 
 	return true;
@@ -478,7 +700,12 @@ void addUnitKey( Compilation& comp, Cstr& code, Cstr& token, bool addNameSpace )
 }
 
 //------------------------------------------------------------------------------
-int doOperation( ExpressionContext& context, const Operation** operations, bool* stackUsage, int stackLocation, int position, int size )
+int doOperation( ExpressionContext& context,
+				 const Operation** operations,
+				 bool* stackUsage,
+				 int stackLocation,
+				 int position,
+				 int size )
 {
 
 // a = 40 * 30 - 20 + 10;
@@ -525,7 +752,7 @@ int doOperation( ExpressionContext& context, const Operation** operations, bool*
 		return operand + 1;
 	}
 
-	context.code += operations[position]->operation;
+	addOpcode( context, operations[position]->operation );
 	
 	if ( operations[position]->binary )
 	{
@@ -540,8 +767,9 @@ int doOperation( ExpressionContext& context, const Operation** operations, bool*
 		++operand1;
 		++operand2;
 		
-		context.code += (char)(operand1);
-		context.code += (char)(operand2);
+		context.bytecode += (char)(operand1);
+		context.bytecode += (char)(operand2);
+		context.history.clear();
 
 		D_RESOLVE(Log("added binary for %d @ [%d]->[%d]", position, operand1, operand2));
 
@@ -554,7 +782,8 @@ int doOperation( ExpressionContext& context, const Operation** operations, bool*
 
 		++operand;
 		
-		context.code += (char)(operand);
+		context.bytecode += (char)(operand);
+		context.history.clear();
 		
 		D_RESOLVE(Log("added unary for [%d] @%d", position, operand));
 
@@ -575,19 +804,21 @@ void resolveExpressionOperations( Compilation& comp, ExpressionContext& context 
 	const Operation* operation[126];
 	int stackLocation[126];
 	bool stackUsage[126];
-	int valuesToPop = 0;
+	int CTokensToPop = 0;
+
+	memset( stackUsage, 0, sizeof(bool) * sizeof(stackUsage) );
 
 	int i=0;
 	for( const Operation** entry = context.oper.getHead()->getFirst(); entry ; entry = context.oper.getHead()->getNext() )
 	{
 		if ( *entry )
 		{
-			stackLocation[i] = valuesToPop;
+			stackLocation[i] = CTokensToPop;
 			operation[i] = *entry;
 
 			if ( (*entry)->binary )
 			{
-				++valuesToPop;
+				++CTokensToPop;
 			}
 
 			++i;
@@ -601,7 +832,7 @@ void resolveExpressionOperations( Compilation& comp, ExpressionContext& context 
 		D_RESOLVE(Log("%d/%d @%d [%d:'%s']", o + 2, operations + 2, stackLocation[o], operation[o]->operation, operation[o]->token));
 	}
 
-	int finalResult = valuesToPop;
+	int finalResult = CTokensToPop;
 	
 	for( i=1; i<=c_highestPrecedence; ++i )
 	{
@@ -617,7 +848,7 @@ void resolveExpressionOperations( Compilation& comp, ExpressionContext& context 
 				log = true;
 			}
 
-			for( int v=0; log && v<valuesToPop; ++v )
+			for( int v=0; log && v<CTokensToPop; ++v )
 			{
 				D_RESOLVE(Log("stack[%d] %s", v, stackUsage[v] ? "used":"unused"));
 			}
@@ -635,7 +866,7 @@ void resolveExpressionOperations( Compilation& comp, ExpressionContext& context 
 				log = true;
 			}
 
-			for( int v=0; log && v<valuesToPop; ++v )
+			for( int v=0; log && v<CTokensToPop; ++v )
 			{
 				D_RESOLVE(Log("stack[%d] %s", v, stackUsage[v] ? "used":"unused"));
 			}
@@ -646,23 +877,24 @@ void resolveExpressionOperations( Compilation& comp, ExpressionContext& context 
 	}
 
 	D_RESOLVE(Log("Final Rest[%d]", finalResult));
-	finalResult = finalResult;
-
-	if ( valuesToPop == 1 )
+	finalResult = finalResult; // compiler warning
+	
+	if ( CTokensToPop == 1 )
 	{
-		context.code += (char)O_PopOne;
+		addOpcode( context, O_PopOne );
 	}
-	else if ( valuesToPop > 0 )
+	else if ( CTokensToPop > 0 )
 	{
-		context.code += (char)O_PopNum;
-		context.code += (char)valuesToPop;
+		addOpcode( context, O_PopNum );
+		context.bytecode += (char)CTokensToPop;
+		context.history.clear();
 	}
 
-	D_RESOLVE(Log("and popping off [%d] dead values", valuesToPop));
+	D_RESOLVE(Log("and popping off [%d] dead CTokens", CTokensToPop));
 }
 
 //------------------------------------------------------------------------------
-bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, Value& value )
+bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, CToken& CToken )
 {
 	Cstr label;
 	for(;;)
@@ -685,7 +917,7 @@ bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, Value
 		label += token;
 		D_PARSE_NEW(Log("parseNew building [%s]", label.c_str()));
 		
-		if ( !getToken( comp, token, value) )
+		if ( !getToken( comp, token, CToken) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
@@ -695,7 +927,7 @@ bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, Value
 		{
 			label += "::";
 
-			if ( !getToken( comp, token, value) )
+			if ( !getToken( comp, token, CToken) )
 			{
 				comp.err.format( "unexpected EOF" );
 				return false;
@@ -721,7 +953,7 @@ bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, Value
 	int args = 0;
 	for(;;)
 	{
-		if ( !getToken(comp, token, value) )
+		if ( !getToken(comp, token, CToken) )
 		{
 			comp.err = "unexpected EOF";
 			return false;
@@ -733,7 +965,7 @@ bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, Value
 		}
 
 		context.oper.addHead();
-		if ( !parseExpression(comp, context, token, value) )
+		if ( !parseExpression(comp, context, token, CToken) )
 		{
 			return false;
 		}
@@ -754,10 +986,11 @@ bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, Value
 		return false;
 	}
 
-	context.code += (char)O_NewUnit;
-	context.code += (char)args;
+	addOpcode( context, O_NewUnit );
+	context.bytecode += (char)args;
 	
-	addUnitKey( comp, context.code, label, false );
+	addUnitKey( comp, context.bytecode, label, false );
+	context.history.clear();
 
 	if ( !context.oper.getHead()->count() )
 	{
@@ -781,7 +1014,7 @@ bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, Value
 	// by definition this can only be equated
 	resolveExpressionOperations( comp, context );
 
-	if ( !getToken(comp, token, value) )
+	if ( !getToken(comp, token, CToken) )
 	{
 		comp.err = "unexpected EOF";
 		return false;
@@ -791,7 +1024,7 @@ bool parseNew( Compilation& comp, ExpressionContext& context, Cstr& token, Value
 }
 
 //------------------------------------------------------------------------------
-bool parseTable( Compilation& comp, ExpressionContext& context, Cstr& token, Value& value )
+bool parseTable( Compilation& comp, ExpressionContext& context, Cstr& token, CToken& CToken )
 {
 	for(;;)
 	{
@@ -801,21 +1034,21 @@ bool parseTable( Compilation& comp, ExpressionContext& context, Cstr& token, Val
 			return false;
 		}
 
-		if ( !getToken( comp, token, value) )
+		if ( !getToken( comp, token, CToken) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
 		}
 
 		context.oper.addHead();
-		if ( !parseExpression(comp, context, token, value) ) 
+		if ( !parseExpression(comp, context, token, CToken) ) 
 		{
 			return false;
 		}
 		context.oper.popHead();
 
-		context.code += (char)O_AddTableElement;
-		D_PARSE_TABLE(Log("Pushing key/value pair"));
+		addOpcode( context, O_AddTableElement );
+		D_PARSE_TABLE(Log("Pushing key/CToken pair"));
 
 		if ( token == "]" )
 		{
@@ -825,14 +1058,14 @@ bool parseTable( Compilation& comp, ExpressionContext& context, Cstr& token, Val
 
 		if ( token == "," )
 		{
-			if ( !getToken( comp, token, value) )
+			if ( !getToken( comp, token, CToken) )
 			{
 				comp.err.format( "unexpected EOF" );
 				return false;
 			}
 
 			context.oper.addHead();
-			if ( !parseExpression(comp, context, token, value) ) 
+			if ( !parseExpression(comp, context, token, CToken) ) 
 			{
 				return false;
 			}
@@ -851,15 +1084,17 @@ bool parseTable( Compilation& comp, ExpressionContext& context, Cstr& token, Val
 }
 
 //------------------------------------------------------------------------------
-bool parseArray( Compilation& comp, ExpressionContext& context, Cstr& token, Value& value )
+bool parseArray( Compilation& comp, ExpressionContext& context, Cstr& token, CToken& CToken )
 {
 	unsigned int elementNumber = 0;
 	for(;;)
 	{
 		D_PARSE_ARRAY(Log("Pushing element [%d]", elementNumber));
-		context.code += (char)O_AddArrayElement;
+		addOpcode( context, O_AddArrayElement );
 		unsigned int e = htonl( elementNumber );
-		context.code.append( (char *)&e, 4 );
+		context.bytecode.append( (char *)&e, 4 );
+		context.history.clear();
+
 		++elementNumber;
 
 		if ( token == "]" )
@@ -868,14 +1103,14 @@ bool parseArray( Compilation& comp, ExpressionContext& context, Cstr& token, Val
 			break;
 		}
 							
-		if ( !getToken( comp, token, value) )
+		if ( !getToken( comp, token, CToken) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
 		}
 
 		context.oper.addHead();
-		if ( !parseExpression(comp, context, token, value) ) 
+		if ( !parseExpression(comp, context, token, CToken) ) 
 		{
 			return false;
 		}
@@ -894,7 +1129,7 @@ bool parseArray( Compilation& comp, ExpressionContext& context, Cstr& token, Val
 }
 
 //------------------------------------------------------------------------------
-bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, Value& value )
+bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, CToken& CToken )
 {
 	if ( (context.oper.getHead()->count() != 1)
 		 || ((*context.oper.getHead()->getHead())->operation != O_Assign) )
@@ -905,7 +1140,7 @@ bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, 
 
 	D_PARSE_EXPRESSION(Log("declaration table/array IN"));
 
-	if ( !getToken( comp, token, value) )
+	if ( !getToken( comp, token, CToken) )
 	{
 		comp.err.format( "unexpected EOF" );
 		return false;
@@ -913,7 +1148,7 @@ bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, 
 
 	if ( token == "]" )
 	{
-		if ( !getToken( comp, token, value) )
+		if ( !getToken( comp, token, CToken) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
@@ -928,17 +1163,18 @@ bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, 
 
 		D_PARSE_EXPRESSION(Log("creating blank array from []"));
 
-		context.code += (char)O_PushBlankArray;
+		addOpcode( context, O_PushBlankArray );
 	}
 	else
 	{
-		unsigned int constructOpcodeOffset = context.code.size();
-		context.code += '\01';
+		unsigned int constructOpcodeOffset = context.bytecode.size();
+		context.bytecode += '\01';
+		context.history.clear();
 
 		D_PARSE_EXPRESSION(Log("pushed null to become table"));
 
 		context.oper.addHead();
-		if ( !parseExpression(comp, context, token, value) ) 
+		if ( !parseExpression(comp, context, token, CToken) ) 
 		{
 			return false;
 		}
@@ -950,9 +1186,10 @@ bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, 
 		{
 			D_PARSE_EXPRESSION(Log("Parsing a TABLE"));
 
-			context.code.p_str()[ constructOpcodeOffset ] = O_PushBlankTable;
+			context.bytecode.p_str()[ constructOpcodeOffset ] = O_PushBlankTable;
+			context.history.clear();
 
-			if ( !parseTable( comp, context, token, value) )
+			if ( !parseTable( comp, context, token, CToken) )
 			{
 				return false;
 			}
@@ -961,9 +1198,10 @@ bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, 
 		{
 			D_PARSE_EXPRESSION(Log("Parsing an ARRAY"));
 
-			context.code.p_str()[ constructOpcodeOffset ] = O_PushBlankArray;
+			context.bytecode.p_str()[ constructOpcodeOffset ] = O_PushBlankArray;
+			context.history.clear();
 
-			if ( !parseArray( comp, context, token, value) )
+			if ( !parseArray( comp, context, token, CToken) )
 			{
 				return false;
 			}
@@ -974,7 +1212,7 @@ bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, 
 			return false;
 		}
 
-		if ( !getToken( comp, token, value) )
+		if ( !getToken( comp, token, CToken) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
@@ -996,20 +1234,23 @@ bool parseNewTable( Compilation& comp, ExpressionContext& context, Cstr& token, 
 }
 
 //------------------------------------------------------------------------------
-bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token, Value& value )
+bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token, CToken& value )
 {
-	D_PARSE_EXPRESSION(Log("Parsing expression [%s]: %s", token.c_str(), formatValue(value).c_str()));
+	D_PARSE_EXPRESSION(Log("Parsing expression [%s]: %s", token.c_str(), formatToken(value).c_str()));
+
+	emitDebug( context, comp.pos );
 
 	// okay we have a token which right now is just a lable. need to
 	// figure out what to DO with that label, so find an operation
 
 	Cstr nextToken;
-	Value nextValue;
+	CToken nextvalue;
 
 	bool labelPushed = false;
 	bool unitPushed = false;
 	bool globalName = false;
-
+	bool iteratorAccess = false;
+	
 	if ( value.type != CTYPE_NULL )
 	{
 		token = "";
@@ -1017,7 +1258,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 
 	if ( token == "[" ) // declaring an array or table
 	{
-		if ( !parseNewTable(comp, context, nextToken, nextValue) )
+		if ( !parseNewTable(comp, context, nextToken, nextvalue) )
 		{
 			return false;
 		}
@@ -1036,36 +1277,36 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 		{
 			D_PARSE_EXPRESSION(Log("<1> Adding operation [%d:'%s'] to tail", c_operations[i].operation, c_operations[i].token));
 
-			if ( !getToken( comp, nextToken, nextValue) )
+			if ( !getToken( comp, nextToken, nextvalue) )
 			{
 				comp.err.format( "unexpected EOF" );
 				return false;
 			}
 
 			bool skipParse = false;
-			if ( nextValue.type != CTYPE_NULL )
+			if ( nextvalue.type != CTYPE_NULL )
 			{
 				switch( c_operations[i].operation )
 				{
 					case O_Negate:
 					{
-						if ( nextValue.type == CTYPE_INT )
+						if ( nextvalue.type == CTYPE_INT )
 						{
 							if ( nextToken == "9223372036854775808" )
 							{
 								// specific case of "most negative number"
 								// cannot be properly negated, so brute
 								// force it
-								nextValue.i64 = 0x8000000000000000LL;
+								nextvalue.i64 = 0x8000000000000000LL;
 							}
 							else
 							{
-								nextValue.i64 = -nextValue.i64;
+								nextvalue.i64 = -nextvalue.i64;
 							}
 						}
-						else if ( nextValue.type == CTYPE_FLOAT )
+						else if ( nextvalue.type == CTYPE_FLOAT )
 						{
-							nextValue.d = -nextValue.d;
+							nextvalue.d = -nextvalue.d;
 						}
 						else
 						{
@@ -1073,20 +1314,20 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 							return false;
 						}
 
-						putValue( context.code, nextValue );
+						putCToken( context, nextvalue );
 						skipParse = true;
 						break;
 					}
 					
 					case O_PreIncrement:
 					{
-						if ( nextValue.type == CTYPE_INT )
+						if ( nextvalue.type == CTYPE_INT )
 						{
-							++nextValue.i64;
+							++nextvalue.i64;
 						}
-						else if ( nextValue.type == CTYPE_FLOAT )
+						else if ( nextvalue.type == CTYPE_FLOAT )
 						{
-							++nextValue.d;
+							++nextvalue.d;
 						}
 						else
 						{
@@ -1094,20 +1335,20 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 							return false;
 						}
 
-						putValue( context.code, nextValue );
+						putCToken( context, nextvalue );
 						skipParse = true;
 						break;
 					}
 					
 					case O_PreDecrement:
 					{
-						if ( nextValue.type == CTYPE_INT )
+						if ( nextvalue.type == CTYPE_INT )
 						{
-							--nextValue.i64;
+							--nextvalue.i64;
 						}
-						else if ( nextValue.type == CTYPE_FLOAT )
+						else if ( nextvalue.type == CTYPE_FLOAT )
 						{
-							--nextValue.d;
+							--nextvalue.d;
 						}
 						else
 						{
@@ -1115,7 +1356,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 							return false;
 						}
 
-						putValue( context.code, nextValue );
+						putCToken( context, nextvalue );
 						skipParse = true;
 						break;
 					}
@@ -1123,21 +1364,17 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 					case O_LogicalNot:
 					{
 						int64_t i;
-						if ( (nextValue.type == CTYPE_INT) || (nextValue.type == CTYPE_FLOAT) )
+						if ( (nextvalue.type == CTYPE_INT) || (nextvalue.type == CTYPE_FLOAT) )
 						{
-							i = !nextValue.i64;
+							i = !nextvalue.i64;
 						}
-						else if ( nextValue.type == CTYPE_NULL )
+						else if ( nextvalue.type == CTYPE_NULL )
 						{
 							i = 1;
 						}
-						else if ( nextValue.type == CTYPE_STRING )
+						else if ( nextvalue.type == CTYPE_STRING )
 						{
-							i = nextValue.refCstr->item.size() ? 0 : 1;
-						}
-						else if ( nextValue.type == CTYPE_WSTRING )
-						{
-							i = nextValue.refWstr->item.size() ? 0 : 1;
+							i = nextvalue.string.size() ? 0 : 1;
 						}
 						else
 						{
@@ -1147,13 +1384,15 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 
 						if ( i )
 						{
-							context.code += (char)O_LiteralInt8;
-							context.code += (char)1;
+							addOpcode( context, O_LiteralInt8 );
+							context.bytecode += (char)1;
+							context.history.clear();
 						}
 						else
 						{
-							context.code += (char)O_LiteralInt8;
-							context.code += (char)0;
+							addOpcode( context, O_LiteralInt8 );
+							context.bytecode += (char)0;
+							context.history.clear();
 						}
 
 						skipParse = true;
@@ -1162,16 +1401,16 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 					
 					case O_BitwiseNOT:
 					{
-						if ( nextValue.type != CTYPE_INT )
+						if ( nextvalue.type != CTYPE_INT )
 						{
 							comp.err = "Bitwise Not on illegal literal type";
 							return false;
 						}
 						
-						context.code += (char)O_Literal;
-						context.code += (char)CTYPE_INT;
-						nextValue.i64 = ~nextValue.i64;
-						context.code.append( (char*)&nextValue.i64, 8 );
+						addOpcode( context, O_LiteralInt64 );
+						nextvalue.i64 = ~nextvalue.i64;
+						context.bytecode.append( (char*)&nextvalue.i64, 8 );
+						context.history.clear();
 						skipParse = true;
 						break;
 					}
@@ -1188,7 +1427,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 			{
 				*context.oper.getHead()->addHead() = c_operations + i;
 
-				if ( !parseExpression(comp, context, nextToken, nextValue) ) 
+				if ( !parseExpression(comp, context, nextToken, nextvalue) ) 
 				{
 					return false;
 				}
@@ -1201,13 +1440,13 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 	// okay need to get the next token so we have context on the
 	// current one, having exhausted the existing possiblilities
 	
-	if ( !getToken( comp, nextToken, nextValue) )
+	if ( !getToken( comp, nextToken, nextvalue) )
 	{
 		comp.err.format( "unexpected EOF" );
 		return false;
 	}
 
-	if ( nextValue.type != CTYPE_NULL )
+	if ( nextvalue.type != CTYPE_NULL )
 	{
 		nextToken = "";
 	}
@@ -1216,7 +1455,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 	{
 		D_PARSE_EXPRESSION(Log("Pre-qualified '::' in parse"));
 		
-		if ( nextValue.type != CTYPE_NULL )
+		if ( nextvalue.type != CTYPE_NULL )
 		{
 			comp.err.format( "unexpected literal" );
 			return false;
@@ -1232,13 +1471,42 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 
 		// do not qualify the label
 		token = nextToken;
-		value = nextValue;
+		value = nextvalue;
 
-		if ( !getToken( comp, nextToken, nextValue) )
+		if ( !getToken( comp, nextToken, nextvalue) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
 		}
+	}
+
+	if ( token == "." && value.spaceBefore && !value.spaceAfter ) // iterator access
+	{
+		D_PARSE_EXPRESSION(Log("iterator access in parse"));
+
+		if ( nextvalue.type != CTYPE_NULL )
+		{
+			comp.err.format( "unexpected literal" );
+			return false;
+		}
+
+		if ( !isValidLabel(nextToken) )
+		{
+			comp.err.format( "Invalid label [%s]\n", nextToken.c_str() );
+			return false;
+		}
+
+		// do not qualify the label
+		token = nextToken;
+		value = nextvalue;
+
+		if ( !getToken( comp, nextToken, nextvalue) )
+		{
+			comp.err.format( "unexpected EOF" );
+			return false;
+		}
+
+		iteratorAccess = true;
 	}
 	
 	if ( token == "(" )
@@ -1249,7 +1517,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 		{
 			if ( (nextToken == c_operations[i].token) && c_operations[i].matchAsCast )
 			{
-				if ( !getToken( comp, nextToken, nextValue) )
+				if ( !getToken( comp, nextToken, nextvalue) )
 				{
 					comp.err.format( "unexpected EOF" );
 					return false;
@@ -1264,13 +1532,13 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 				*context.oper.getHead()->addHead() = c_operations + i;
 				D_PARSE_EXPRESSION(Log("adding cast operation [%d:'%s'] to tail", c_operations[i].operation, c_operations[i].token));
 
-				if ( !getToken( comp, nextToken, nextValue) )
+				if ( !getToken( comp, nextToken, nextvalue) )
 				{
 					comp.err.format( "unexpected EOF" );
 					return false;
 				}
 
-				if ( !parseExpression(comp, context, nextToken, nextValue) ) 
+				if ( !parseExpression(comp, context, nextToken, nextvalue) ) 
 				{
 					return false;
 				}
@@ -1281,7 +1549,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 
 		// parse sub-expression before proceeding
 		context.oper.addHead();
-		if ( !parseExpression(comp, context, nextToken, nextValue) ) 
+		if ( !parseExpression(comp, context, nextToken, nextvalue) ) 
 		{
 			return false;
 		}
@@ -1295,7 +1563,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 
 		D_PARSE_EXPRESSION(Log("parse SUB expression OUT"));
 
-		if ( !getToken( comp, nextToken, nextValue) )
+		if ( !getToken( comp, nextToken, nextvalue) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
@@ -1305,26 +1573,37 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 	}
 	else if ( token == "new" )
 	{
-		if ( !parseNew( comp, context, nextToken, nextValue ) )
+		if ( !parseNew( comp, context, nextToken, nextvalue ) )
 		{
 			return false;
 		}
 		
 		goto parseExpressionSuccess;
 	}
-	
-	if ( nextToken == "." ) // label qualifier?
+
+	if ( nextToken == "." && !nextvalue.spaceBefore && !nextvalue.spaceAfter ) // label qualifier?
 	{
-		if ( !labelPushed && !loadLabel(comp, context, token, value, true) ) // loads from current context
+		if ( iteratorAccess )
 		{
+			comp.err.format( "unexpected token '%s'", nextToken.c_str() );
+			return false;
+		}
+		
+		if ( !labelPushed && !loadLabel(comp, context, token, value, true, globalName) )
+		{
+			Log("label qualifier but no label");
 			return false;
 		}
 
 		D_PARSE_EXPRESSION(Log("<1> pushed [%s] as unit context", token.c_str()));
 
+objectDeref:
+
+		globalName = false;
+
 		do
 		{
-			if ( !getToken(comp, nextToken, nextValue) )
+			if ( !getToken(comp, nextToken, nextvalue) )
 			{
 				comp.err = "unexpected EOF";
 				return false;
@@ -1336,14 +1615,15 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 				return false;
 			}
 
-			context.code += (char)O_MemberAccess;
+			addOpcode( context, O_MemberAccess );
 
 			unsigned int key = htonl(hash( nextToken, comp ));
-			context.code.append( (char *)&key, 4 );
-			
+			context.bytecode.append( (char *)&key, 4 );
+			context.history.clear();
+	
 			D_PARSE_EXPRESSION(Log("loaded [%s]", nextToken.c_str()));
 			
-			if ( !getToken(comp, nextToken, nextValue) )
+			if ( !getToken(comp, nextToken, nextvalue) )
 			{
 				comp.err = "unexpected EOF";
 				return false;
@@ -1356,13 +1636,19 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 	}
 	else if ( nextToken == "::" ) // absolute location
 	{
+		if ( iteratorAccess )
+		{
+			comp.err.format( "unexpected token '%s'", nextToken.c_str() );
+			return false;
+		}
+
 		globalName = true;
 
 		while ( nextToken == "::" )
 		{
 			token += nextToken;
 
-			if ( !getToken(comp, nextToken, nextValue) )
+			if ( !getToken(comp, nextToken, nextvalue) )
 			{
 				comp.err.format( "unexpected EOF" );
 				return false;
@@ -1376,26 +1662,32 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 			
 			token += nextToken;
 			
-			if ( !getToken(comp, nextToken, nextValue) )
+			if ( !getToken(comp, nextToken, nextvalue) )
 			{
 				comp.err.format( "unexpected EOF" );
 				return false;
 			}
 		}
 	}
-
+	
 	if ( nextToken == "[" )
 	{
+		if ( iteratorAccess )
+		{
+			comp.err.format( "unexpected token '%s'", nextToken.c_str() );
+			return false;
+		}
+
 		D_PARSE_EXPRESSION(Log("dereference operator IN"));
 
 		// put the label on the stack
-		if ( !labelPushed && !loadLabel(comp, context, token, value, true) )
+		if ( !labelPushed && !loadLabel(comp, context, token, value, true, globalName) )
 		{
 			return false;
 		}
 
 		// parse the next block as a full operation
-		if ( !getToken(comp, nextToken, nextValue) )
+		if ( !getToken(comp, nextToken, nextvalue) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
@@ -1403,7 +1695,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 
 		// parse sub-expression before proceeding
 		context.oper.addHead();
-		if ( !parseExpression(comp, context, nextToken, nextValue) ) 
+		if ( !parseExpression(comp, context, nextToken, nextvalue) ) 
 		{
 			return false;
 		}
@@ -1415,39 +1707,24 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 			return false;
 		}	
 
-		context.code += (char)O_DereferenceFromTable;
+		addOpcode( context, O_DereferenceFromTable );
 
 		// this will leave one entry on the stack which IS an Lvalue
 		labelPushed = true;
 
-		if ( !getToken(comp, nextToken, nextValue) )
+		if ( !getToken(comp, nextToken, nextvalue) )
 		{
 			comp.err.format( "unexpected EOF" );
 			return false;
 		}
 	}
-	else if ( nextToken == "(" ) // call this label as a function? alrighty
+	else if ( nextToken == "(" ) // call this label as a function? alrighty lets figure THAT out
 	{
-/*
-		global  unitPushed
-		c_func();       F          F       LG      looked up in global unitList by c_func
-		A();            F          F       LG      looked up in global unitList by A
-		A::B();         T          F       GO      looked up in global unitList by A::B (symbol)
-
-		a = new A();
-		a.B();          F          T       U       reference stack
-
-		unit A()
-		{
-		B();        F          F       LG      look up local then check	global
-		c_func();   F          F       LG      look up local then check	global
-		C();        F          F       LG      look up local then check	global
-		::C();      T          F       GO      looked up in global unitList by A::B (symbol)
-		::c_func(); T          F       GO      looked up in global unitList by A::B (symbol)
-		A::B();     T          F       GO      looked up in global unitList by A::B (symbol)
-
-*/
-		if ( !isValidLabel(token, true) )
+		bool yield = token == "yield";
+		bool thread = token == "thread";
+		bool import = token == "import";
+		
+		if ( !thread && !yield && !import && (!isValidLabel(token, true)) )
 		{
 			comp.err.format( "Invalid function name [%s]", token.c_str() );
 			return false;
@@ -1455,11 +1732,11 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 
 		// this implies global context though
 		D_PARSE_EXPRESSION(Log("calling[%s] globalName[%s] unitPushed[%s]", token.c_str(), globalName ? "TRUE":"FALSE" , unitPushed ? "TRUE":"FALSE" ));
-
+		
 		int args = 0;
 		for(;;)
 		{
-			if ( !getToken(comp, nextToken, nextValue) )
+			if ( !getToken(comp, nextToken, nextvalue) )
 			{
 				comp.err = "unexpected EOF";
 				return false;
@@ -1471,7 +1748,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 			}
 
 			context.oper.addHead();
-			if ( !parseExpression(comp, context, nextToken, nextValue) )
+			if ( !parseExpression(comp, context, nextToken, nextvalue) )
 			{
 				return false;
 			}
@@ -1492,42 +1769,67 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 			return false;
 		}
 
-		if ( globalName )
+		if ( yield )
+		{
+			addOpcode( context, O_Yield );
+			context.bytecode += (char)args;
+			context.history.clear();
+		}
+		else if ( thread )
+		{
+			addOpcode( context, O_Thread );
+			context.bytecode += (char)args;
+			context.history.clear();
+		}
+		else if ( import )
+		{
+			addOpcode( context, O_Import );
+			context.bytecode += (char)args;
+			context.history.clear();
+		}
+		else if ( iteratorAccess )
+		{
+			D_PARSE_EXPRESSION(Log("function iterator access[%s]", token.c_str()));
+
+			addOpcode( context, O_CallIteratorAccessor );
+			context.bytecode += (char)args;
+			addSymbolPlaceholder( comp, context.bytecode, context.symbols, token, true, 0 );
+			context.history.clear();
+		}
+		else if ( globalName )
 		{
 			D_PARSE_EXPRESSION(Log("function GO[%s]", token.c_str()));
 
-			context.code += (char)O_CallGlobalOnly;
-			context.code += (char)args;
-			addSymbolPlaceholder( comp, context.code, context.symbols, token, true, 0 );
+			addOpcode( context, O_CallGlobalOnly );
+			context.bytecode += (char)args;
+			addSymbolPlaceholder( comp, context.bytecode, context.symbols, token, true, 0 );
+			context.history.clear();
 		}
 		else if ( unitPushed )
 		{
 			D_PARSE_EXPRESSION(Log("function U[%s]", token.c_str()));
 
-			context.code += (char)O_CallFromUnitSpace;
-			context.code += (char)args;
+			addOpcode( context, O_CallFromUnitSpace );
+			context.bytecode += (char)args;
+			context.history.clear();
+			addOpcode( context, O_ShiftOneDown );
 		}
 		else
 		{
 			D_PARSE_EXPRESSION(Log("function LG[%s]", token.c_str()));
 
-			context.code += (char)O_CallLocalThenGlobal;
-			context.code += (char)args;
+			addOpcode( context, O_CallLocalThenGlobal );
+			context.bytecode += (char)args;
 
 			unsigned int key = htonl(hash( token, comp ));
-			context.code.append( (char *)&key, 4 );
+			context.bytecode.append( (char *)&key, 4 );
+
+			context.history.clear();
 		}
-
-		// for end-of-expression-chain tokens resolve them
-		//		if ( context.oper.getHead()->count() )
-		//		{
-		//			D_PARSE_EXPRESSION(Log("<3> resolving expressions" ));
-		//			resolveExpressionOperations( comp, context );
-		//		}
-
+		
 		labelPushed = true;
 
-		if ( !getToken(comp, nextToken, nextValue) )
+		if ( !getToken(comp, nextToken, nextvalue) )
 		{
 			comp.err = "unexpected EOF";
 			return false;
@@ -1539,7 +1841,7 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 	{
 		D_PARSE_EXPRESSION(Log("<2> end of expression '%s'", nextToken.c_str()));
 
-		if ( !labelPushed && !loadLabel(comp, context, token, value, false) )
+		if ( !labelPushed && !loadLabel(comp, context, token, value, false, globalName) )
 		{
 			return false;
 		}
@@ -1554,11 +1856,18 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 		goto parseExpressionSuccess;
 	}
 
+	if ( nextToken == "." && !nextvalue.spaceBefore && !nextvalue.spaceAfter ) // access the result as a unit
+	{
+		D_PARSE_EXPRESSION(Log("'.' found after result, processing as member access" ));
+		labelPushed = true;
+		goto objectDeref; // and back up again as many times as needed to drill into the correct object
+	}
+	
 	// check for post operators
 	for( int i=0; c_operations[i].token; i++ )
 	{
 		if ( nextToken == c_operations[i].token
-			 && ((c_operations[i].binary || c_operations[i].postFix) && (nextValue.type == CTYPE_NULL))
+			 && ((c_operations[i].binary || c_operations[i].postFix) && (nextvalue.type == CTYPE_NULL))
 			 && !c_operations[i].matchAsCast )
 		{
 			*context.oper.getHead()->addHead() = c_operations + i;
@@ -1572,22 +1881,22 @@ bool parseExpression( Compilation& comp, ExpressionContext& context, Cstr& token
 				}
 
 				nextToken = token;
-				nextValue = value;
+				nextvalue = value;
 			}
 			else
 			{
-				if ( !labelPushed && !loadLabel( comp, context, token, value, c_operations[i].lvalue ) )
+				if ( !labelPushed && !loadLabel( comp, context, token, value, c_operations[i].lvalue, globalName ) )
 				{
 					return false;
 				}
 
-				if ( !getToken(comp, nextToken, nextValue) )
+				if ( !getToken(comp, nextToken, nextvalue) )
 				{
 					comp.err.format( "unexpected EOF" );
 					return false;
 				}
 
-				if ( !parseExpression(comp, context, nextToken, nextValue) ) 
+				if ( !parseExpression(comp, context, nextToken, nextvalue) ) 
 				{
 					return false;
 				}
@@ -1609,28 +1918,29 @@ parseExpressionSuccess:
 }
 
 //------------------------------------------------------------------------------
-void addJumpLocation( UnitEntry& unit, int id, bool canOptimize =false )
+void addJumpLocation( UnitEntry& unit, int id )
 {
-	D_JUMP(Log("Adding jump away id [%d]@[%d]", id, unit.program.size()));
+	D_JUMP(Log("Adding jump away id [%d]@[%d]", id, unit.bytecode.size()));
 
 	CodePointer* link = unit.jumpLinkSymbol.add();
-	link->offset = unit.program.size();
-	link->canOptimize = canOptimize;
+	link->offset = unit.bytecode.size();
 	link->targetIndex = id;
-	link->added = false;
-	unit.program += "\01\02\03\04"; // placeholder
+	link->bytesForPointer = 4;
+	unit.bytecode += "\01\02\03\04"; // placeholder
+
+	unit.history.clear();
 }
 
 //------------------------------------------------------------------------------
 void addJumpTarget( UnitEntry& unit, int id )
 {
-	D_JUMP(Log("Adding jump to [%d]@[%d]", id, unit.program.size()));
+	D_JUMP(Log("Adding jump to [%d]@[%d]", id, unit.bytecode.size()));
 
-	*unit.jumpIndexes.add( id ) = unit.program.size();
+	*unit.jumpIndexes.add( id ) = unit.bytecode.size();
 }
 
 //------------------------------------------------------------------------------
-bool parseIfChain( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
+bool parseIfChain( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, CToken& value )
 {
 	D_IFCHAIN(Log("Into if chain"));
 	
@@ -1673,7 +1983,7 @@ bool parseIfChain( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 
 	int conditionFalseMarker = Compilation::jumpIndex++;
 
-	unit.program += (char)O_BZ;
+	addOpcode( unit, O_BZ );
 	addJumpLocation( unit, conditionFalseMarker );
 
 	D_IFCHAIN(Log("if ( $$ ) false condition [%d] dropped", conditionFalseMarker));
@@ -1693,18 +2003,14 @@ bool parseIfChain( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 
 	D_IFCHAIN(Log("if (  ) { $$ }"));
 
-	if ( !getToken(comp, token, value) )
-	{
-		D_IFCHAIN(Log("ifchain EOF"));
-		return true; // EOF here is okay
-	}
-
+	getToken( comp, token, value );
+	
 	if ( token == "else" )
 	{
 		// not done, jump from here PAST The next logic to the end point
 		int conditionTrueMarker = Compilation::jumpIndex++;
 
-		unit.program += (char)O_Jump;
+		addOpcode( unit, O_Jump );
 		addJumpLocation( unit, conditionTrueMarker );
 
 		D_IFCHAIN(Log("else case detected, set up jump PAST it as [%d] and dropped false marker[%d] location here", conditionTrueMarker, conditionFalseMarker));
@@ -1762,7 +2068,7 @@ bool parseIfChain( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 }
 
 //------------------------------------------------------------------------------
-bool parseWhileLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
+bool parseWhileLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, CToken& value )
 {
 	if ( !getToken(comp, token, value) )
 	{
@@ -1795,7 +2101,7 @@ bool parseWhileLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& cont
 	}
 	context.oper.popHead();
 
-	unit.program += (char)O_BZ;
+	addOpcode( unit, O_BZ );
 	addJumpLocation( unit, loop->breakTarget );
 
 	if ( token != ")" )
@@ -1825,7 +2131,7 @@ bool parseWhileLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& cont
 		return false;
 	}
 
-	unit.program += (char)O_Jump;
+	addOpcode( unit, O_Jump );
 	addJumpLocation( unit, loop->continueTarget );
 	addJumpTarget( unit, loop->breakTarget );
 
@@ -1835,7 +2141,7 @@ bool parseWhileLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& cont
 }
 
 //------------------------------------------------------------------------------
-bool parseDoLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
+bool parseDoLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, CToken& value )
 {
 	LoopingStructure* loop = unit.loopTracking.addHead();
 	loop->continueTarget = Compilation::jumpIndex++;
@@ -1918,7 +2224,7 @@ bool parseDoLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context
 		return false;
 	}
 
-	unit.program += (char)O_BNZ;
+	addOpcode( unit, O_BNZ );
 	addJumpLocation( unit, loop->continueTarget );
 	addJumpTarget( unit, loop->breakTarget );
 
@@ -1928,7 +2234,7 @@ bool parseDoLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context
 }
 
 //------------------------------------------------------------------------------
-bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
+bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, CToken& value )
 {
 	if ( !getToken(comp, token, value) )
 	{
@@ -1956,7 +2262,7 @@ bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& co
 		return false;
 	}
 
-	unsigned int valueKey = hash( token, comp );
+	unsigned int key1 = hash( token, comp );
 
 	if ( !getToken(comp, token, value) )
 	{
@@ -1966,7 +2272,7 @@ bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& co
 
 	D_FOREACHLOOP(Log("itemLabel [%s]", itemLabel.c_str()));
 
-	unsigned int keyKey = 0;
+	unsigned int key2 = 0;
 	if ( token == "," )
 	{
 		if ( !getToken(comp, token, value) )
@@ -1981,7 +2287,7 @@ bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& co
 			return false;
 		}
 
-		keyKey = hash( token, comp );
+		key2 = hash( token, comp );
 
 		D_FOREACHLOOP(Log("keyLabel [%s]", token.c_str()));
 		 
@@ -1999,7 +2305,7 @@ bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& co
 	}
 	else if ( token != ":" )
 	{	
-		comp.err.format( "unexpected token [%s]", token.c_str() );
+		comp.err.format( "expected ':'", token.c_str() );
 		return false;
 	}
 	else
@@ -2013,6 +2319,7 @@ bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& co
 		return false;
 	}
 
+	// the result of this better be an iterable object:
 	context.oper.addHead();
 	if ( !parseExpression(comp, context, token, value) )
 	{
@@ -2020,31 +2327,38 @@ bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& co
 	}
 	context.oper.popHead();
 
-	// replace the table with an iterator FOR the table
-	unit.program += (char)O_PushIterator;
-	
+	// replace the table with an iterator
+	addOpcode( unit, O_PushIterator );
+
+	// possible iterator methods:
+	// .remove
+	// .clear
+	// .prev
+	// .next
+	// .add
+	// .insertBefore
+	// .insertAfter
+		
 	LoopingStructure* loop = unit.loopTracking.addHead();
 	loop->continueTarget = Compilation::jumpIndex++;
 	loop->breakTarget = Compilation::jumpIndex++;
 
 	addJumpTarget( unit, loop->continueTarget );
 
-	if ( !keyKey )
+	addOpcode( unit, key2 ? O_IteratorGetNextKeyValueOrBranch : O_IteratorGetNextValueOrBranch );
+
+	key1 = htonl( key1 );
+	unit.bytecode.append( (char *)&key1, 4 );
+
+	if ( key2 )
 	{
-		unit.program += (char)O_IteratorGetNextValueOrBranch;
-		unsigned int k = htonl(valueKey);
-		unit.program.append( (char *)&k, 4 );
-	}
-	else
-	{
-		unit.program += (char)O_IteratorGetNextKeyValueOrBranch;
-		unsigned int k = htonl(keyKey);
-		unit.program.append( (char *)&k, 4 );
-		k = htonl(valueKey);
-		unit.program.append( (char *)&k, 4 );
+		key2 =  htonl( key2 );
+		unit.bytecode.append( (char *)&key2, 4 );
 	}
 
 	addJumpLocation( unit, loop->breakTarget );
+
+	unit.history.clear();
 
 	if ( token != ")" )
 	{
@@ -2071,12 +2385,12 @@ bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& co
 		return false;
 	}
 
-	unit.program += (char)O_Jump;
+	addOpcode( unit, O_Jump );
 	addJumpLocation( unit, loop->continueTarget );
 	
 	addJumpTarget( unit, loop->breakTarget );
 
-	unit.program += (char)O_PopOne; // ignore return value from setup expression
+	addOpcode( unit, O_PopOne );
 
 	unit.loopTracking.popHead();
 
@@ -2084,7 +2398,7 @@ bool parseForEachLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& co
 }
 
 //------------------------------------------------------------------------------
-bool parseForLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
+bool parseForLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, CToken& value )
 {
 	if ( !getToken(comp, token, value) )
 	{
@@ -2117,7 +2431,7 @@ bool parseForLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 			}
 			context.oper.popHead();
 
-			unit.program += (char)O_PopOne; // ignore return value from setup expression
+			addOpcode( unit, O_PopOne ); // ignore return CToken from setup expression
 
 			if ( token == "," )
 			{
@@ -2164,7 +2478,7 @@ bool parseForLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 		}
 		context.oper.popHead();
 		
-		unit.program += (char)O_BZ; //--------- BRANCH OUT?
+		addOpcode( unit, O_BZ ); //--------- BRANCH OUT?
 		addJumpLocation( unit, loop->breakTarget );
 	}
 	
@@ -2182,8 +2496,9 @@ bool parseForLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 	// symbols must be re-located so make a temp table for them
 	// too
 	Cstr after;
+	Cstr history;
 	CLinkList<LinkEntry> afterSymbols;
-	ExpressionContext afterContext( after, afterSymbols );
+	ExpressionContext afterContext( after, history, afterSymbols );
 
 	if ( !getToken(comp, token, value) )
 	{
@@ -2202,7 +2517,7 @@ bool parseForLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 			}
 			context.oper.popHead();
 			
-			after += (char)O_PopOne; // ignore result
+			addOpcode( afterContext, O_PopOne ); // ignore result
 			if ( token == "," )
 			{
 				if ( !getToken(comp, token, value) )
@@ -2255,14 +2570,18 @@ bool parseForLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 	{
 		LinkEntry *L = unit.unitSym.addTail();
 		*L = *link;
-		L->offset += unit.program.size();
+		L->offset += unit.bytecode.size();
 	}
-	unit.program += after;
+	unit.bytecode += after;
 
-	unit.program += (char)O_Jump;
+	unit.history.clear();
+
+	addOpcode( unit, O_Jump );
 
 	addJumpLocation( unit, loop->continueTarget );
 	addJumpTarget( unit, loop->breakTarget );
+
+	unit.history.clear();
 
 	unit.loopTracking.popHead();
 	
@@ -2270,7 +2589,7 @@ bool parseForLoop( Compilation& comp, UnitEntry& unit, ExpressionContext& contex
 }
 
 //------------------------------------------------------------------------------
-bool parseSwitch( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
+bool parseSwitch( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, CToken& value )
 {
 	D_SWITCH(Log("Parsing 'switch'"));
 	
@@ -2301,7 +2620,7 @@ bool parseSwitch( Compilation& comp, UnitEntry& unit, ExpressionContext& context
 
 	SwitchContext* sc = unit.switchContexts.add();
 
-	unit.program += (char)O_Switch; // take the value on the stack, pull the jump vector that is placed next and jump for the selection logic
+	addOpcode( unit, O_Switch ); // take the CToken on the stack, pull the jump vector that is placed next and jump for the selection logic
 
 	sc->tableLocationId = Compilation::jumpIndex++;
 	addJumpLocation( unit, sc->tableLocationId );
@@ -2347,7 +2666,7 @@ bool parseSwitch( Compilation& comp, UnitEntry& unit, ExpressionContext& context
 }
 		
 //------------------------------------------------------------------------------
-bool parseEnum( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
+bool parseEnum( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, CToken& value )
 {
 	if ( !getToken(comp, token, value) )
 	{
@@ -2388,7 +2707,7 @@ bool parseEnum( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 
 	D_ENUM(Log("This space [%s]", thisSpace.c_str()));
 
-	for( int runningValue = 0 ; ; ++runningValue )
+	for( int runningCToken = 0 ; ; ++runningCToken )
 	{
 		if ( !getToken(comp, token, value) )
 		{
@@ -2407,13 +2726,13 @@ bool parseEnum( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 			return false;
 		}
 
-		Cstr valueName = thisSpace;
-		valueName += token;
-		unsigned int key = hash( valueName, comp );
+		Cstr CTokenName = thisSpace;
+		CTokenName += token;
+		unsigned int key = hash( CTokenName, comp );
 
-		if ( comp.enumValues.get( key ) )
+		if ( comp.enumCTokens.get( key ) )
 		{
-			comp.err.format( "repeated enumeration identifier [%s]", valueName.c_str() );
+			comp.err.format( "repeated enumeration identifier [%s]", CTokenName.c_str() );
 			return false;
 		}
 		
@@ -2425,9 +2744,9 @@ bool parseEnum( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 
 		if( token == "," )
 		{
-			D_ENUM(Log("<1> [%s:0x%08X] = %lld", valueName.c_str(), key, runningValue));
+			D_ENUM(Log("<1> [%s:0x%08X] = %lld", CTokenName.c_str(), key, runningCToken));
 
-			*comp.enumValues.add( key ) = runningValue;
+			*comp.enumCTokens.add( key ) = runningCToken;
 		}
 		else if ( token == "=" )
 		{
@@ -2459,10 +2778,10 @@ bool parseEnum( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 				value.i64 = -value.i64;
 			}
 			
-			D_ENUM(Log("<2> [%s:0x%08X] = %lld", valueName.c_str(), key, value.i64));
+			D_ENUM(Log("<2> [%s:0x%08X] = %lld", CTokenName.c_str(), key, value.i64));
 
-			*comp.enumValues.add( key ) = (int)value.i64;
-			runningValue = (int)value.i64;
+			*comp.enumCTokens.add( key ) = (int)value.i64;
+			runningCToken = (int)value.i64;
 
 			if ( !getToken(comp, token, value) )
 			{
@@ -2482,8 +2801,8 @@ bool parseEnum( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 		}
 		else if ( token == "}" )
 		{
-			D_ENUM(Log("<3> [%s:0x%08X] = %d", valueName.c_str(), key, runningValue));
-			*comp.enumValues.add( key ) = (int)value.i64;
+			D_ENUM(Log("<3> [%s:0x%08X] = %d", CTokenName.c_str(), key, runningCToken));
+			*comp.enumCTokens.add( key ) = (int)value.i64;
 			break;
 		}
 		else
@@ -2497,16 +2816,15 @@ bool parseEnum( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 }
 
 //------------------------------------------------------------------------------
-bool parseImport( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
+bool parseUnit( Compilation& comp,
+				UnitEntry& unit,
+				ExpressionContext& context,
+				Cstr& token,
+				CToken& value,
+				bool member,
+				bool passedToken )
 {
-	
-	return true;
-}
-
-//------------------------------------------------------------------------------
-bool parseUnit( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value )
-{
-	if ( !getToken(comp, token, value) )
+	if ( !passedToken && !getToken(comp, token, value) )
 	{
 		comp.err.format( "unexpected EOF" );
 		return false;
@@ -2564,7 +2882,9 @@ bool parseUnit( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 
 	UnitEntry *oldUnit = comp.currentUnit;
 	comp.currentUnit = comp.units.addTail();
+	comp.currentUnit->history.clear();
 	comp.currentUnit->baseOffset = 0;
+	comp.currentUnit->member = member;
 
 	Cstr thisSpace;
 	for( Cstr* S = comp.space->getFirst(); S; S = comp.space->getNext() )
@@ -2667,12 +2987,12 @@ bool parseUnit( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 		{
 			D_PARSE_UNIT(Log("COPY arg claim[%s]", token.c_str()));
 			copyKeywordSeen = false;
-			comp.currentUnit->program += (char)O_ClaimCopyArgument;
+			addOpcode( *comp.currentUnit, O_ClaimCopyArgument );
 		}
 		else
 		{
 			D_PARSE_UNIT(Log("arg claim[%s]", token.c_str()));
-			comp.currentUnit->program += (char)O_ClaimArgument;
+			addOpcode( *comp.currentUnit, O_ClaimArgument );
 		}
 
 		unsigned int key = hash( token, comp );
@@ -2684,9 +3004,10 @@ bool parseUnit( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 		
 		*comp.currentUnit->argumentTokenMapping.add(key) = token;
 					
-		comp.currentUnit->program += (char)argNumber++;
+		comp.currentUnit->bytecode += (char)argNumber++;
 		unsigned int mkey = htonl(hash( token, comp ));
-		comp.currentUnit->program.append( (char *)&mkey, 4 );
+		comp.currentUnit->bytecode.append( (char *)&mkey, 4 );
+		unit.history.clear();
 	}
 
 	if ( !getToken(comp, token, value) )
@@ -2773,7 +3094,7 @@ bool parseUnit( Compilation& comp, UnitEntry& unit, ExpressionContext& context, 
 }
 
 //------------------------------------------------------------------------------
-bool processSwitchContexts( Compilation& target, UnitEntry& unit )
+bool processSwitchContexts( Compilation& comp, UnitEntry& unit )
 {
 	for( SwitchContext *sc = unit.switchContexts.getFirst(); sc; sc = unit.switchContexts.getNext() )
 	{
@@ -2783,43 +3104,79 @@ bool processSwitchContexts( Compilation& target, UnitEntry& unit )
 		
 		D_SWITCH(Log("Switch Context break[%d] tableLocation[%d] entries[%d]", sc->breakTarget, sc->tableLocationId, count));
 		count = htonl(count);
-		unit.program.append( (char *)&count, 4 );
-		unit.program += sc->hasDefault ? (char)1 : (char)0;
-		
+		unit.bytecode.append( (char *)&count, 4 );
+		unit.bytecode += sc->hasDefault ? (char)1 : (char)0;
+		unit.history.clear();
+
 		SwitchCase *defaultCase = 0;
 		unsigned int hash = 0;
-		for( SwitchCase *C = sc->caseLocations.getFirst(); C; C = sc->caseLocations.getNext() )
+		uint64_t highestSwitchDirect = 0;
+		uint64_t lowestSwitchDirect = 0xFFFFFFFFFFFFFFFFULL;
+
+		CLinkList<SwitchCase>::Iterator iter1(sc->caseLocations);
+		CLinkList<SwitchCase>::Iterator iter2(sc->caseLocations);
+		
+		for( SwitchCase *C = iter1.getFirst(); C; C = iter1.getNext() )
 		{
+			hash = C->val.getHash();
+
+			if ( hash > highestSwitchDirect )
+			{
+				highestSwitchDirect = hash;
+			}
+			if ( hash < lowestSwitchDirect )
+			{
+				lowestSwitchDirect = hash;
+			}
+
+			for( SwitchCase *C2 = iter2.getFirst(); C2; C2 = iter2.getNext() )
+			{
+				if ( (C != C2)
+					 && (hash == C2->val.getHash())
+					 && !C->defaultCase
+					 && !C2->defaultCase )
+				{
+//					comp.err.format( "<internal error> switch case hash duplication [%s] and [%s]", formatCToken(C->val).c_str(), formatCToken(C2->val).c_str() );
+//					return false;
+				}
+			}
+
+			hash = htonl( hash );
+
 			if ( C->defaultCase )
 			{
 				defaultCase = C;
 			}
 			else
 			{
-				hash = htonl(C->val.getHash());
-				unit.program.append( (char *)&hash, 4 );
+				unit.bytecode.append( (char *)&hash, 4 );
 				addJumpLocation( unit, C->jumpIndex );
-				
-				D_SWITCH(Log("val[%s] jumpIndex[%d] enum[%s] default[%s]", formatValue(C->val).c_str(), C->jumpIndex, C->enumName.c_str(), C->defaultCase ? "T":"F"));
+				unit.history.clear();
+
+				D_SWITCH(Log("val[%s] jumpIndex[%d] enum[%s] default[%s]", formatCToken(C->val).c_str(), C->jumpIndex, C->enumName.c_str(), C->defaultCase ? "T":"F"));
 			}
 		}
 
 		if ( defaultCase )
 		{
 			hash = htonl(defaultCase->val.getHash());
-			unit.program.append( (char *)&hash, 4 );
+			unit.bytecode.append( (char *)&hash, 4 );
 			addJumpLocation( unit, defaultCase->jumpIndex );
+			unit.history.clear();
 		}
 	}
 
 	return true;
 }
 
+
 //------------------------------------------------------------------------------
-bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, Value& value, SwitchContext* sc, bool& tokenFetched )
+bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext& context, Cstr& token, CToken& value, SwitchContext* sc, bool& tokenFetched )
 {
 	SwitchCase* C = 0;
-	
+
+	emitDebug( context, comp.pos );
+			
 	if ( token == "default" )
 	{
 		if ( !sc )
@@ -2839,6 +3196,8 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 			comp.err = "unexpected EOF";
 			return false;
 		}
+
+		emitDebug( context, comp.pos );
 
 		D_SWITCH(Log("'default' case parsed"));
 	}
@@ -2860,6 +3219,8 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 			return false;
 		}
 
+		emitDebug( context, comp.pos );
+
 		if ( (token != "null") && (C->val.type == CTYPE_NULL) )
 		{
 			if ( !isValidLabel(token) )
@@ -2877,6 +3238,8 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 					comp.err = "unexpected EOF";
 					return false;
 				}
+
+				emitDebug( context, comp.pos );
 
 				if ( token == ":" )
 				{
@@ -2896,6 +3259,8 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 					return false;
 				}
 
+				emitDebug( context, comp.pos );
+
 				if ( !isValidLabel(token) )
 				{
 					comp.err.format( "invalid label [%s]", token.c_str() );
@@ -2905,17 +3270,19 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 				C->enumName += token;
 			}
 
-			D_SWITCH(Log("case built enum value [%s]", C->enumName.c_str()));
+			D_SWITCH(Log("case built enum CToken [%s]", C->enumName.c_str()));
 		}
 		else
 		{
-			D_SWITCH(Log("case built [%s]", formatValue(C->val).c_str()));
+			D_SWITCH(Log("case built [%s]", formatCToken(C->val).c_str()));
 
 			if ( !getToken(comp, token, value) )
 			{
 				comp.err = "unexpected EOF";
 				return false;
 			}
+
+			emitDebug( context, comp.pos );
 		}
 	}
 
@@ -2962,56 +3329,35 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 				  && check->val.type == CTYPE_INT
 				  && C->val.i64 == check->val.i64 )
 		{
-			comp.err.format( "Duplicate case [%s]", formatValue(C->val).c_str());
+			comp.err.format( "Duplicate case [%s]", formatToken(C->val).c_str());
 			return false;
 		}
 		else if ( C->val.type == CTYPE_FLOAT
 				  && check->val.type == CTYPE_INT
 				  && C->val.d == check->val.i64 )
 		{
-			comp.err.format( "Duplicate case [%s]", formatValue(C->val).c_str());
+			comp.err.format( "Duplicate case [%s]", formatToken(C->val).c_str());
 			return false;
 		}
 		else if ( C->val.type == CTYPE_FLOAT
 				  && check->val.type == CTYPE_FLOAT
 				  && C->val.d == check->val.d )
 		{
-			comp.err.format( "Duplicate case [%s]", formatValue(C->val).c_str());
+			comp.err.format( "Duplicate case [%s]", formatToken(C->val).c_str());
 			return false;
 		}
 		else if ( C->val.type == CTYPE_INT
 				  && check->val.type == CTYPE_INT
 				  && C->val.i64 == check->val.i64 )
 		{
-			comp.err.format( "Duplicate case [%s]", formatValue(C->val).c_str());
+			comp.err.format( "Duplicate case [%s]", formatToken(C->val).c_str());
 			return false;
 		}
 		else if ( C->val.type == CTYPE_STRING
 				  && check->val.type == CTYPE_STRING
-				  && C->val.refCstr->item == check->val.refCstr->item )
+				  && C->val.string == check->val.string )
 		{
-			comp.err.format( "Duplicate case [%s]", formatValue(C->val).c_str());
-			return false;
-		}
-		else if ( C->val.type == CTYPE_WSTRING
-				  && check->val.type == CTYPE_STRING
-				  && C->val.refWstr->item == check->val.refCstr->item )
-		{
-			comp.err.format( "Duplicate case [%s]", formatValue(C->val).c_str());
-			return false;
-		}
-		else if ( C->val.type == CTYPE_WSTRING
-				  && check->val.type == CTYPE_WSTRING
-				  && C->val.refWstr->item == check->val.refWstr->item )
-		{
-			comp.err.format( "Duplicate case [%s]", formatValue(C->val).c_str());
-			return false;
-		}
-		else if ( C->val.type == CTYPE_STRING
-				  && check->val.type == CTYPE_WSTRING
-				  && C->val.refCstr->item == check->val.refWstr->item )
-		{
-			comp.err.format( "Duplicate case [%s]", formatValue(C->val).c_str());
+			comp.err.format( "Duplicate case [%s]", formatToken(C->val).c_str());
 			return false;
 		}
 	}
@@ -3027,6 +3373,8 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 		comp.err = "unexpected EOF";
 		return false;
 	}
+
+	emitDebug( context, comp.pos );
 
 	if ( token == "{" )
 	{
@@ -3047,8 +3395,8 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 	D_PARSE(Log("parsing block: unit[%d] loop[%d] switch[%p] single[%s]", comp.space->count(), unit.loopTracking.count(), sc, preload ? preload->c_str() :"F"));
 	
 	Cstr token = preload ? *preload : "";
-	Value value;
-	ExpressionContext context( unit.program, unit.unitSym );
+	CToken value;
+	ExpressionContext context( unit.bytecode, unit.history, unit.unitSym );
 	bool tokenFetched = false;
 	for(;;)
 	{
@@ -3058,6 +3406,8 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 			{
 				break;
 			}
+
+			emitDebug( context, comp.pos );
 		}
 
 		tokenFetched = false;
@@ -3084,7 +3434,7 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 			context.oper.addHead();
 			if ( token == ";" )
 			{
-				unit.program += (char)O_LiteralNull;
+				addOpcode( unit, O_LiteralNull );
 			}
 			else if ( !parseExpression(comp, context, token, value) )
 			{
@@ -3092,7 +3442,7 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 			}
 			context.oper.popHead();
 
-			unit.program += (char)O_Return;
+			addOpcode( unit, O_Return );
 		}
 		else if ( token == "if" )
 		{
@@ -3105,7 +3455,7 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 		}
 		else if ( token == "break" )
 		{
-			unit.program += (char)O_Jump;
+			addOpcode( unit, O_Jump );
 			
 			if ( unit.loopTracking.count() )
 			{
@@ -3139,7 +3489,7 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 
 			if ( unit.loopTracking.getHead()->continueTarget )
 			{
-				unit.program += (char)O_Jump;
+				addOpcode( unit, O_Jump );
 				addJumpLocation( unit, unit.loopTracking.getHead()->continueTarget );
 			}
 			else
@@ -3222,8 +3572,8 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 			else if ( context == B_UNIT )
 			{
 				D_PARSE(Log("End of unit, adding implicit: return null;"));
-				unit.program += (char)O_LiteralNull;
-				unit.program += (char)O_Return;
+				addOpcode( unit, O_LiteralNull );
+				addOpcode( unit, O_Return );
 				break;
 			}
 			else
@@ -3232,9 +3582,29 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 				return false;
 			}
 		}
+		else if ( token == "member" )
+		{
+			if ( !getToken(comp, token, value) )
+			{
+				comp.err = "unexpected EOF";
+				return false;
+			}
+
+			if ( token == "unit" )
+			{
+				if ( !parseUnit(comp, unit, context, token, value, true, false) )
+				{
+					return false;
+				}
+			}
+			else if ( !parseUnit(comp, unit, context, token, value, true, true) )
+			{
+				return false;
+			}
+		}
 		else if ( token == "unit" )
 		{
-			if ( !parseUnit(comp, unit, context, token, value) )
+			if ( !parseUnit(comp, unit, context, token, value, false, false) )
 			{
 				return false;
 			}
@@ -3242,13 +3612,6 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 		else if ( token == "enum" )
 		{
 			if ( !parseEnum( comp, unit, context, token, value ) )
-			{
-				return false;
-			}
-		}
-		else if ( token == "import" )
-		{
-			if ( !parseImport( comp, unit, context, token, value ) )
 			{
 				return false;
 			}
@@ -3279,7 +3642,7 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 				return false;
 			}
 
-			unit.program += (char)O_PopOne; // all expressions result in a value but we are done with this block so pop it
+			addOpcode( unit, O_PopOne ); // all expressions result in a CToken but we are done with this block so pop it
 		}
 
 		if ( preload  )
@@ -3294,9 +3657,52 @@ bool parseBlock( Compilation& comp, UnitEntry& unit, SwitchContext* sc, Cstr* pr
 }
 
 //------------------------------------------------------------------------------
+void fixupCodePointers( UnitEntry *entry, CodePointer* pointer )
+{
+	unsigned int adjustment = 4 - pointer->bytesForPointer;
+	
+	CLinkList<LinkEntry>::Iterator liter( entry->unitSym );
+	for( LinkEntry* val = liter.getFirst(); val; val = liter.getNext() )
+	{
+		if ( val->offset > pointer->offset )
+		{
+			val->offset -= adjustment;
+		}
+	}
+
+	bool restart = false;
+
+	CLinkList<CodePointer>::Iterator sym( entry->jumpLinkSymbol );
+	for( CodePointer* symbolLoc = sym.getFirst(); symbolLoc && !restart; symbolLoc = sym.getNext() )
+	{
+		if ( symbolLoc == pointer )
+		{
+			continue;
+		}
+
+		unsigned int *offset = entry->jumpIndexes.get( symbolLoc->targetIndex );
+		if ( !offset )
+		{
+			Log("index %d not found <2>", symbolLoc->targetIndex );
+			return;
+		}
+		
+		if ( *offset > pointer->offset )
+		{
+			*offset -= adjustment;
+		}
+		
+		if ( symbolLoc->offset > pointer->offset )
+		{
+			symbolLoc->offset -= adjustment;
+		}
+	}
+}
+
+//------------------------------------------------------------------------------
 bool link( Compilation& target )
 {
-	D_LINK(Log("parsed units[%d] values[%d]", target.units.count(), target.values.count()));
+	D_LINK(Log("parsed units[%d] CTokens[%d]", target.units.count(), target.CTokens.count()));
 
 	CodeHeader f;
 	memset( &f, 0, sizeof(CodeHeader) );
@@ -3305,73 +3711,97 @@ bool link( Compilation& target )
 	CLinkList<UnitEntry>::Iterator unitIter1( target.units );
 	CLinkList<UnitEntry>::Iterator unitIter2( target.units );
 
+	
+	// attempt to optimize jump lengths.. this is a pain and I haven't
+	// gotten it right yet due to re-location madness.. 
+
+/*
+	for( UnitEntry* E = unitIter1.getFirst(); E; E = unitIter1.getNext() )
+	{
+		CLinkList<CodePointer>::Iterator sym1( E->jumpLinkSymbol );
+		for( CodePointer* symbolLocation = sym1.getFirst(); symbolLocation; symbolLocation = sym1.getNext() )
+		{
+			unsigned int *offset = E->jumpIndexes.get( symbolLocation->targetIndex );
+			if ( !offset )
+			{
+				Log("index %d not found <1>", symbolLocation->targetIndex );
+				return false;
+			}
+
+			int relative = (*offset + E->baseOffset) - (E->baseOffset + symbolLocation->offset);
+			char* opcode = target.output->p_str( (E->baseOffset + symbolLocation->offset) - 1 );
+
+			if ( (relative >= -127) && (relative <= 128) )
+			{
+				D_LINK(Log("Optimizing 8-bit opcode[%d]", (int)*opcode));
+
+				symbolLocation->bytesForPointer = 1;
+				
+				switch ( *opcode )
+				{
+					case O_BZ: *opcode = (char)O_BZ8; break;
+					case O_BNZ: *opcode = (char)O_BNZ8; break;
+					case O_Jump: *opcode = (char)O_Jump8; break;
+					default: target.err.format( "unrecognized opcode 0x%02",(unsigned char)*opcode); return false;
+				}
+
+				fixupCodePointers( E, symbolLocation );
+			}
+			else if ( (relative >= -32768 ) && (relative <= 32767) )
+			{
+				D_LINK(Log("Optimizing 16-bit opcode[%d]", (int)*opcode));
+
+				symbolLocation->bytesForPointer = 2;
+
+				switch ( *opcode )
+				{
+					case O_BZ: *opcode = (char)O_BZ16; break;
+					case O_BNZ: *opcode = (char)O_BNZ16; break;
+					case O_Jump: *opcode = (char)O_Jump16; break;
+					default: target.err.format( "unrecognized opcode 0x%02",(unsigned char)*opcode); return false;
+				}
+
+				fixupCodePointers( E, symbolLocation );
+			}
+			// else nothing, guess we need al 32 bits? wow doesn't
+			// seem too likely.
+
+			D_LINK(Log("jump vector[%d] [%d]->[%d] relative[%d]:%d", symbolLocation->targetIndex, E->baseOffset + symbolLocation->offset, *offset + E->baseOffset, relative, symbolLocation->bytesForPointer));
+		}
+	}
+*/
+	
 	// stack the code together
 	for( UnitEntry* E = unitIter1.getFirst(); E; E = unitIter1.getNext() )
 	{
 		E->baseOffset = target.output->size(); // entry point for unit
-		target.output->append( E->program.c_str(), E->program.size() );
+		target.output->append( E->bytecode.c_str(), E->bytecode.size() );
 
-		D_LINK(Log("unit[%s] %d @%d", E->name.c_str(), E->program.size(), E->baseOffset ));
+		D_LINK(Log("unit[%s] %d @%d", E->name.c_str(), E->bytecode.size(), E->baseOffset ));
+	}
 
+	// install jump locations
+	for( UnitEntry* E = unitIter1.getFirst(); E; E = unitIter1.getNext() )
+	{
 		for( CodePointer* symbolLocation = E->jumpLinkSymbol.getFirst(); symbolLocation; symbolLocation = E->jumpLinkSymbol.getNext() )
 		{
-			int *offset = E->jumpIndexes.get( symbolLocation->targetIndex );
+			unsigned int *offset = E->jumpIndexes.get( symbolLocation->targetIndex );
 			if ( !offset )
 			{
 				Log("index %d not found", symbolLocation->targetIndex );
 				return false;
 			}
 
-			int relative = (*offset + E->baseOffset) - (E->baseOffset + symbolLocation->offset);// + symbolLocation->offset;
+			int relative = (*offset + E->baseOffset) - (E->baseOffset + symbolLocation->offset);
 
-//			TODO-  something like the following can shorten all the
-//			32-bit relative jumps to 8/16 versions but shifts the
-//			ENTIRE byte image around so has to be approached carefully
-//			(since both sources and target of every move _MIGHT_ need
-//			to be recomputed if any one of them change, particularly
-//			intersting in the case of a jump/target being beofre AND
-//			after a move. approach I want to take is to pre-compute all
-//			moves before installing any of them so nothing has to be
-//			re-written
-/*
-			if ( symbolLocation->canOptimize )
+			switch( symbolLocation->bytesForPointer )
 			{
-				restart = true;
-				symbolLocation->canOptimize = false;
-				symbolLocation->added = true;
-
-				char* opcode = target.output->c_str( (E->baseOffset + symbolLocation->offset) - 1 );
-
-				if ( (relative >= -127) && (relative <= 128)
-				{
-					D_LINK(Log("Optimizing 8-bit opcode[%d]", (int)opcode));
-					if ( relative > 0 )
-					{
-						relative -= 3;
-					}
-
-					*target.output->c_str( E->baseOffset + symbolLocation->offset ) = relative;
-					target.output->shift( E->baseOffset + symbolLocation->offset + 4, E->baseOffset + symbolLocation->offset + 1 );
-
-					for( CodePointer* reLocate = E->jumpLinkSymbol.getFirst(); reLocate; reLocate = E->jumpLinkSymbol.getNext() )
-					{
-						if ( re
-					}
-
-
-					switch ( *opcode )
-					{
-						case O_BZ: *opcode = (char)O_BZ8; break;
-						case O_BNZ: *opcode = (char)O_BNZ8; break;
-						case O_Jump: *opcode = (char)O_Jump8; break;
-						default: target.err.format( "unrecognized opcode 0x%02",(unsigned char)*opcode); return false;
-					}
-				}
+				case 1: *(int8_t *)(target.output->p_str( E->baseOffset + symbolLocation->offset )) = (int8_t)relative; break;
+				case 2: *(short *)target.output->p_str( E->baseOffset + symbolLocation->offset ) = htons( (int16_t)relative ); break;
+				case 4: *(int *)target.output->p_str( E->baseOffset + symbolLocation->offset ) = htonl( relative ); break;
 			}
-			else if ( !symbolLocation->added )
-*/
-			*(int *)target.output->c_str( E->baseOffset + symbolLocation->offset ) = htonl( relative );
-			D_LINK(Log("jump vector[%d] [%d]->[%d] relative[%d]", symbolLocation->targetIndex, E->baseOffset + symbolLocation->offset, *offset + E->baseOffset, relative));
+
+			D_LINK(Log("jump vector[%d] [%d]->[%d] relative[%d]:%d", symbolLocation->targetIndex, E->baseOffset + symbolLocation->offset, *offset + E->baseOffset, relative, symbolLocation->bytesForPointer));
 		}
 	}
 	
@@ -3387,7 +3817,7 @@ bool link( Compilation& target )
 			
 			// default to target base (global)
 			*(unsigned int *)target.output->c_str( E->baseOffset + L->offset ) = htonl(hash( L->plainTarget, target));
-			D_LINK(Log("value link default[%s] @%d", L->plainTarget.c_str(), E->baseOffset + L->offset ));
+			D_LINK(Log("CToken link default[%s] @%d", L->plainTarget.c_str(), E->baseOffset + L->offset ));
 
 			for( UnitEntry* E2 = unitIter2.getFirst(); E2; E2 = unitIter2.getNext() )
 			{
@@ -3397,7 +3827,6 @@ bool link( Compilation& target )
 
 					// unless a more specific one is found
 					*(unsigned int *)target.output->c_str( E->baseOffset + L->offset ) = htonl(hash( E2->name, target ));
-
 					
 					break;
 				}
@@ -3415,20 +3844,71 @@ bool link( Compilation& target )
 				continue;
 			}
 
-			int* V = target.enumValues.get( L->enumKey );
+			int* V = target.enumCTokens.get( L->enumKey );
+
 			if ( !V )
 			{
-				V = target.enumValues.get( hash(L->target, target) );
+				V = target.enumCTokens.get( hash(L->target, target) );
 				if ( !V )
 				{
-					target.err.format( "Enum [%s] not defined", L->target.c_str() );
-					return false;
+					// assume it will be filled in as a constant later,
+					// the key was already loaded as the "offset"
+					// against this possibility, so jusr morpth the
+					// opcode into a global load
+					*(char *)target.output->c_str( E->baseOffset + (L->offset - 1) ) = O_LoadLabelGlobal;
+					continue;
 				}
 			}
-			
+
 			*(int *)target.output->c_str( E->baseOffset + L->offset ) = htonl(*V);
 		}
 	}
 	
 	return true;
 }
+
+//------------------------------------------------------------------------------
+int Callisto_runFile( Callisto_Context* C, const char* fileName, const Callisto_Handle argumentValueHandle )
+{
+	Cstr file;
+	if ( !file.fileToBuffer(fileName) )
+	{
+		return g_Callisto_lastErr = CE_FileErr;
+	}
+
+	return Callisto_run( C, file.c_str(), file.size(), argumentValueHandle );
+}
+
+//------------------------------------------------------------------------------
+int Callisto_run( Callisto_Context* C, const char* inData, const unsigned int inLen, const Callisto_Handle argumentValueHandle )
+{
+	if ( !inData )
+	{
+		return g_Callisto_lastErr = CE_DataErr;
+	}
+
+	unsigned int realLen = (unsigned int)(inLen ? inLen : strlen(inData));
+
+	const CodeHeader *header = (CodeHeader *)inData;
+	if ( (realLen < sizeof(CodeHeader)) || (ntohl(header->CRC) != hash(header, sizeof(CodeHeader) - 4)) )
+	{
+		char* data = 0;
+		unsigned int len = 0;
+		
+		if ( Callisto_parse(inData, realLen, &data, &len) )
+		{
+			return g_Callisto_lastErr;
+		}
+		
+		int ret = Callisto_runCompiled( C, data, len, argumentValueHandle );
+		
+		delete[] data;
+		
+		return ret;
+	}
+	else
+	{
+		return Callisto_runCompiled( C, inData, realLen, argumentValueHandle );
+	}
+}
+

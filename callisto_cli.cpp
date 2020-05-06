@@ -2,11 +2,12 @@
 
 #include <stdio.h>
 
-#include "source/util.h"
-#include "source/str.hpp"
-#include "source/asciidump.hpp"
-#include "source/log.hpp"
+#include "source/str.h"
+#include "source/asciidump.h"
+#include "source/log.h"
 CLog Log;
+
+int Callisto_tests( int runTest =0, bool debug =false );
 
 //------------------------------------------------------------------------------
 int usage()
@@ -14,6 +15,7 @@ int usage()
 	printf( "Usage: callisto <command> <source> [<target>]\n"
 			"where command is:\n"
 			"c       compile <source>\n"
+			"d       compile with debug <source>\n"
 			"r       run <compiled code>\n"
 		  );
 	return -1;
@@ -36,7 +38,9 @@ int main( int argn, char** argv )
 		return usage();
 	}
 
-	if ( *argv[1] == 'c' )
+	Callisto_RunOptions options;
+	
+	if ( *argv[1] == 'c' || *argv[1] == 'd' )
 	{
 		Cstr source;
 		if ( !source.fileToBuffer( argv[2] ) )
@@ -47,7 +51,8 @@ int main( int argn, char** argv )
 
 		char* out;
 		unsigned int outLen;
-		Callisto_parse( source.c_str(), source.size(), &out, &outLen );
+
+		Callisto_parse( source.c_str(), source.size(), &out, &outLen, *argv[1] == 'd' );
 
 		Cstr bufOut;
 		bufOut.set( out, outLen );
@@ -64,28 +69,42 @@ int main( int argn, char** argv )
 	}
 	else if ( *argv[1] == 'r' )
 	{
-		Callisto_Context C;
-		Callisto_importStdlib( &C );
-		Callisto_ExecutionContext* E = Callisto_createExecutionContext( &C );
-
-		Callisto_Handle H = Callisto_createValue( E );
-
-		for( int a = 3; a<argn; ++a )
-		{
-			Callisto_setArrayValue( E, H, a - 3, Callisto_createValue(E, argv[a], (int)strlen(argv[a])) );
-		}
-
-		if ( Callisto_loadFile(E, argv[2], H) )
+		Callisto_Context* C = Callisto_createContext( &options );
+		Callisto_importAll( C );
+	
+		if ( Callisto_runFile(C, argv[2]) )
 		{
 			printf( "loadFile err[%d]: [%s]\n",  Callisto_lastErr(), Callisto_formatError(Callisto_lastErr()) );
 			return -1;
 		}
 
-		Callisto_releaseValue( E, H );
+/*
+		
+		options.argumentValueHandle = Callisto_createValue( C );
+
+		for( int a = 3; a<argn; ++a )
+		{
+			Callisto_setArrayValue( C, options.argumentValueHandle, a - 3, Callisto_createValue(C, argv[a], (int)strlen(argv[a])) );
+		}
+
+		if ( Callisto_runFile(C, argv[2], &options) )
+		{
+			printf( "loadFile err[%d]: [%s]\n",  Callisto_lastErr(), Callisto_formatError(Callisto_lastErr()) );
+			return -1;
+		}
+
+		Callisto_releaseValue( C, options.argumentValueHandle );
+*/
+
+		Callisto_destroyContext( C );
 	}
 	else if ( *argv[1] == 't' )
 	{
 		Callisto_tests( (argn >= 3) ? atoi(argv[2]) : 0 );
+	}
+	else if ( *argv[1] == 'T' )
+	{
+		Callisto_tests( (argn >= 3) ? atoi(argv[2]) : 0, true );
 	}
 	else
 	{

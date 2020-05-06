@@ -2,142 +2,207 @@
 #define CALLISTO_H
 /*------------------------------------------------------------------------------*/
 
-#define CALLISTO_VERSION 0x0001
+#define CALLISTO_VERSION 0x0020
 
 #include <stdint.h>
 
-struct Unit;
-struct Value;
 struct Callisto_Context;
 struct Callisto_ExecutionContext;
 
-Callisto_Context* Callisto_createContext();
-Callisto_ExecutionContext* Callisto_createExecutionContext( Callisto_Context* C );
-void Callisto_destroyContext( Callisto_Context* C );
-void Callisto_destroyExecutionContext( Callisto_ExecutionContext* E );
+typedef int Callisto_Handle;
+typedef Callisto_Handle (*Callisto_CallbackFunction)( Callisto_ExecutionContext* E );
 
-//------------------------------------------------------------------------------
+#define Callisto_NULL_HANDLE 0
+#define Callisto_THIS_HANDLE -1
+
+struct Callisto_RunOptions
+{
+	bool returnOnIdle; // if no tasks can run, should it return, or spin in a nice loop waiting for work [standalone]
+	bool returnOnError; // if false, interpreter will try to continue if a thread dies messily
+	void (*traceCallback)( const char* code, const unsigned int line, const unsigned int col, const int thread );
+	void (*warningCallback)( const int warning, const char* code, const unsigned int line, const unsigned int col, const int thread );
+	bool warningsFatal;
+
+	Callisto_RunOptions()
+	{
+		warningsFatal = false;
+		returnOnIdle = true;
+		returnOnError = true;
+		traceCallback = 0;
+		warningCallback = 0;
+	}
+};
+
+Callisto_Context* Callisto_createContext( const Callisto_RunOptions* options =0 );
+void Callisto_destroyContext( Callisto_Context* C );
+
 enum Callisto_Error
 {
 	CE_NoError = 0,
-	CE_FileErr = -1,
-	CE_DataErr = -2,
-	CE_BadVersion = -3,
-	CE_ThreadNotFound = -4,
-	CE_UnitNotFound = -5,
-	CE_ParentNotFound = -6,
-	CE_IncompatibleDataTypes = -7,
-	CE_StackedPostOperatorsUnsupported = -8,
-	CE_AssignedValueToStack = -9,
-	CE_UnhashableDataType = -10,
-	CE_TryingToAccessMembersOfNonUnit = -11,
-	CE_MemberNotFound = -12,
-	CE_TypeCannotBeIterated = -13,
-	CE_UnrecognizedByteCode = -14,
-	CE_CannotOperateOnLiteral = -15,
-	CE_HandleNotFound = -16,
-};
-
-//------------------------------------------------------------------------------
-enum Callisto_TypeBits
-{
-	BIT_TYPE_0 = 1<<0,
-	BIT_TYPE_1 = 1<<1,
-	BIT_TYPE_2 = 1<<2,
-	BIT_TYPE_3 = 1<<3,
+	CE_FileErr = -999,
+	CE_ImportMustBeString,
+	CE_ImportLoadError,
 	
-	BIT_PASS_BY_REF = 1<<5, // if set, this value is passed by reference only
-	BIT_CAN_HASH = 1<<6,
+	CE_DataErr,
+	CE_IncompatibleDataTypes,
+	CE_HandleNotFound,
+	CE_BadVersion,
+	CE_BadLabel,
+	CE_NullPointer,
+	CE_ArgOutOfRange,
+
+	CE_ThreadNotFound,
+	CE_UnitNotFound,
+	CE_ParentNotFound,
+	CE_UnitNotNative,
+
+	CE_LiteralPostOperatorNotPossible,
+	CE_TryingToAccessMembersOfNonUnit,
+	CE_AssignedValueToStack,
+	
+	CE_UnhashableDataType,
+	CE_MemberNotFound,
+	CE_TypeCannotBeIterated,
+	CE_IteratorNotFound,
+	CE_UnrecognizedByteCode,
+	CE_CannotOperateOnLiteral,
+	
+	CE_VMRunningOnLoad,
+	CE_ThreadNotIdle,
+	CE_ThreadNotWaiting,
+	CE_ThreadAlreadyWaiting,
+	
+	CE_FirstThreadArgumentMustBeUnit,
+	CE_FunctionTableNotFound,
+	CE_FunctionTableEntryNotFound,
+	CE_StackNotEmptyAtExecutionComplete,
+	CE_CannotMixFunctionsWithCallable,
+
+	CE_ValueIsConst,
+	CE_TriedToCallNonUnit,
 };
-
-//------------------------------------------------------------------------------
-enum Callisto_DataType
-{
-	CTYPE_NULL     = 0 | BIT_CAN_HASH,
-	CTYPE_INT      = 1 | BIT_CAN_HASH,
-	CTYPE_FLOAT    = 2 | BIT_CAN_HASH,
-	CTYPE_STRING   = 3 | BIT_PASS_BY_REF | BIT_CAN_HASH,
-	CTYPE_WSTRING  = 4 | BIT_PASS_BY_REF | BIT_CAN_HASH,
-	CTYPE_UNIT     = 5 | BIT_PASS_BY_REF,
-	CTYPE_TABLE    = 6 | BIT_PASS_BY_REF,
-	CTYPE_ARRAY    = 7 | BIT_PASS_BY_REF,
-
-	CTYPE_OFFSTACK_REFERENCE = 8, // this value is a placeholder on the stack for the actual value held in *v
-
-	CTYPE_ARRAY_ITERATOR = 9 | BIT_PASS_BY_REF,
-	CTYPE_HASH_ITERATOR = 10 | BIT_PASS_BY_REF,
-	CTYPE_STRING_ITERATOR = 11 | BIT_PASS_BY_REF,
-	CTYPE_WSTRING_ITERATOR = 12 | BIT_PASS_BY_REF,
-	// 10 reserved
-	// 11 reserved
-	// 12 reserved
-	// 13 reserved
-	// 14 reserved
-	// 15 reserved
-};
-
-typedef unsigned int Callisto_Handle;
-typedef Callisto_Handle (*Callisto_CallbackFunction)( Callisto_ExecutionContext* context );
-
-#define Callisto_EMPTY_HANDLE 0
-
-//------------------------------------------------------------------------------
-struct Callisto_FunctionEntry
-{
-	const char* label;
-	Callisto_CallbackFunction function;
-	void* userData;
-};
-void Callisto_importList( Callisto_Context* C, const Callisto_FunctionEntry* entries, const int numberOfEntries );
-void Callisto_importFunction( Callisto_Context* C, const char* label, Callisto_CallbackFunction function, void* userData =0 );
-
-void Callisto_importStdlib( Callisto_Context *C );
-void Callisto_importString( Callisto_Context *C );
-
-void Callisto_clearGlobalMetaTable( Callisto_Context* C, const int type );
-void Callisto_setGlobalMetaTable( Callisto_Context* C, const int type, const Callisto_FunctionEntry* entries, const int numberOfEntries );
 
 const int Callisto_lastErr();
-const char* Callisto_formatError( int err );
+const char* Callisto_formatError( const int err );
 
-int Callisto_parse( const char* data, const int size, char** out, unsigned int* outLen );
+enum Callisto_ThreadState
+{
+	Runnable, // will run the next time the scheduler gets to it
+	Running, // is running right now
+	Waiting, // waiting for an event
+	Reap, // completed, jsut waiting to be cleaned up by the scheduler
+};
 
-// load a file (if it is pre-parsed, great, otherwise try and run 'parse' on it) and run to establish globals
-int Callisto_loadFile( Callisto_ExecutionContext *E, const char* fileName, const Callisto_Handle argumentValueHandle =0 );
-int Callisto_load( Callisto_ExecutionContext *E, const char* inData, const unsigned int inLen =0, const Callisto_Handle argumentValueHandle =0 );
+struct Callisto_FunctionEntry
+{
+	const char* functionName; // what this function is called
+	Callisto_CallbackFunction function; // C-signature function
+	void* userData; //  opaque pointer that will be passed to function when called
+};
+void Callisto_importFunction( Callisto_ExecutionContext* E, const char* functionName, Callisto_CallbackFunction function, void* userData );
+void Callisto_importFunction( Callisto_Context* C, const char* functionName, Callisto_CallbackFunction function, void* userData );
+void Callisto_importFunctionList( Callisto_ExecutionContext* E, const Callisto_FunctionEntry* entries, const int numberOfEntries );
+void Callisto_importFunctionList( Callisto_Context* C, const Callisto_FunctionEntry* entries, const int numberOfEntries );
 
-int Callisto_execute( Callisto_ExecutionContext *E, const char* unitName, const Callisto_Handle argumentValueHandle =0 );
+int Callisto_importConstant( Callisto_ExecutionContext* E, const char* name, const Callisto_Handle handle );
+int Callisto_importConstant( Callisto_Context* C, const char* name, const Callisto_Handle handle );
 
-const char* Callisto_getStringArg( Callisto_ExecutionContext* E, const int argNum, char* data =0, unsigned int* len =0 );
-const wchar_t* Callisto_getWStringArg( Callisto_ExecutionContext* E, const int argNum, wchar_t* data =0, unsigned int* len =0 );
-int64_t Callisto_getIntArg( Callisto_ExecutionContext* E, const int argNum );
-double Callisto_getFloatArg( Callisto_ExecutionContext* E, const int argNum );
-void* Callisto_getUserData( Callisto_ExecutionContext* E );
+void Callisto_importAll( Callisto_Context *C );
+void Callisto_importStdlib( Callisto_Context *C );
+void Callisto_importString( Callisto_Context *C );
+void Callisto_importMath( Callisto_Context *C );
+void Callisto_importFile( Callisto_Context *C );
+void Callisto_importJson( Callisto_Context *C );
+void Callisto_importIterators( Callisto_Context *C );
+
+int Callisto_parse( const char* data, const int size, char** out, unsigned int* outLen, const bool addDebugInfo =false );
+
+int Callisto_runFile( Callisto_Context* C, const char* fileName, const Callisto_Handle argumentValueHandle =0 );
+int Callisto_run( Callisto_Context* C, const char* inData, const unsigned int inLen =0, const Callisto_Handle argumentValueHandle =0 );
+
+int Callisto_runFileCompiled( Callisto_Context* C, const char* fileName, const Callisto_Handle argumentValueHandle =0 );
+int Callisto_runCompiled( Callisto_Context* C, const char* inData, const unsigned int inLen, const Callisto_Handle argumentValueHandle =0 );
+
+const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* unitName, const Callisto_Handle argumentHandle );
+const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* unitName, const Callisto_Handle* argumentValueHandleList =0 );
+const Callisto_Handle Callisto_call( Callisto_Context *C, const char* unitName, const Callisto_Handle argumentHandle );
+const Callisto_Handle Callisto_call( Callisto_Context* C, const char* unitName, const Callisto_Handle* argumentValueHandleList =0 );
+
 const unsigned int Callisto_getNumberOfArgs( Callisto_ExecutionContext* E );
+const char* Callisto_getStringArg( Callisto_ExecutionContext* E, const int argNum, const char** data =0, unsigned int* len =0 );
+const wchar_t* Callisto_getWStringArg( Callisto_ExecutionContext* E, const int argNum, wchar_t* data, unsigned int* len );
+const char* Callisto_formatArg( Callisto_ExecutionContext* E, const int argNum, char* data, unsigned int* len );
+const int64_t Callisto_getIntArg( Callisto_ExecutionContext* E, const int argNum );
+const double Callisto_getFloatArg( Callisto_ExecutionContext* E, const int argNum );
 
-int Callisto_getArgType( Callisto_ExecutionContext* E, const int argNum );
+void* Callisto_getUserData( Callisto_ExecutionContext* E );
 
-const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E );
-const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E, const int64_t i );
-const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E, const double d );
-const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E, const char* string, const int len =0 );
-const Callisto_Handle Callisto_createValue( Callisto_ExecutionContext* E, const wchar_t* string, const int len =0 );
+enum Callisto_ArgType
+{
+	Callisto_ArgNull =0,
+	Callisto_ArgInt,
+	Callisto_ArgFloat,
+	Callisto_ArgString,
+	Callisto_ArgArray,
+	Callisto_ArgTable,
+	Callisto_ArgUnit,
+	Callisto_ArgStringIterator,
+	Callisto_ArgTableIterator,
+	Callisto_ArgArrayIterator,
+};
+const Callisto_ArgType Callisto_getArgType( Callisto_ExecutionContext* E, const int argNum );
+void Callisto_setTypeMethods( Callisto_Context* C, const Callisto_ArgType type, const Callisto_FunctionEntry* entries =0, const int numberOfEntries =0 );
 
-int Callisto_setValue( Callisto_ExecutionContext* E, const Callisto_Handle loadToHandle, const int64_t i );
-int Callisto_setValue( Callisto_ExecutionContext* E, const Callisto_Handle loadToHandle, const double d );
-int Callisto_setValue( Callisto_ExecutionContext* E, const Callisto_Handle loadToHandle, const char* string, const int len =0 );
-int Callisto_setValue( Callisto_ExecutionContext* E, const Callisto_Handle loadToHandle, const wchar_t* string, const int len =0 );
+const Callisto_ArgType Callisto_getHandleType( Callisto_ExecutionContext* E, const Callisto_Handle handle );
+const Callisto_ArgType Callisto_getHandleType( Callisto_Context* C, const Callisto_Handle handle );
+const int Callisto_handleToString( Callisto_Context* C, const Callisto_Handle handle, const char** buf, int* len );
+const int Callisto_handleToString( Callisto_ExecutionContext* E, const Callisto_Handle handle, const char** buf, int* len );
+const int Callisto_handleToFloat( Callisto_Context* C, const Callisto_Handle handle, double* value );
+const int Callisto_handleToFloat( Callisto_ExecutionContext* E, const Callisto_Handle handle, double* value );
+const int Callisto_handleToInt( Callisto_Context* C, const Callisto_Handle handle, int64_t* value );
+const int Callisto_handleToInt( Callisto_ExecutionContext* E, const Callisto_Handle handle, int64_t* value );
 
-int Callisto_setArrayValue( Callisto_ExecutionContext* E, const Callisto_Handle handleOfArray, const int index, const Callisto_Handle handleOfData );
-int Callisto_addArrayValue( Callisto_ExecutionContext* E, const Callisto_Handle handleOfArray, const Callisto_Handle handleOfData );
-int Callisto_getArrayCount( Callisto_ExecutionContext* E, const Callisto_Handle handleOfArray );
-int Callisto_getArrayValue( Callisto_ExecutionContext* E, const int index );
+const Callisto_Handle Callisto_setValue( Callisto_ExecutionContext* E, const int64_t i, const Callisto_Handle handle =0 );
+const Callisto_Handle Callisto_setValue( Callisto_ExecutionContext* E, const double d, const Callisto_Handle handle =0 );
+const Callisto_Handle Callisto_setValue( Callisto_ExecutionContext* E, const char* string, const int len =-1, const Callisto_Handle handle =0 );
+const Callisto_Handle Callisto_setValue( Callisto_ExecutionContext* E, const wchar_t* wstring, const int len =-1, const Callisto_Handle handle =0 );
 
-int Callisto_setTableValue( Callisto_ExecutionContext* E, const Callisto_Handle handleOfTable, const Callisto_Handle handleOfKey, const Callisto_Handle handleOfData );
-int Callisto_getTableCount( Callisto_ExecutionContext* E, const Callisto_Handle handleOfTable );
-int Callisto_getTableValue( Callisto_ExecutionContext* E, const Callisto_Handle handleOfArray, const Callisto_Handle handleOfKey );
+const Callisto_Handle Callisto_setValue( Callisto_Context* C, const int64_t i, const Callisto_Handle handle =0 );
+const Callisto_Handle Callisto_setValue( Callisto_Context* C, const double d, const Callisto_Handle handle =0 );
+const Callisto_Handle Callisto_setValue( Callisto_Context* C, const char* string, const int len =0, const Callisto_Handle handle =0 );
+const Callisto_Handle Callisto_setValue( Callisto_Context* C, const wchar_t* wstring, const int len =0, const Callisto_Handle handle =0 );
+
+const Callisto_Handle Callisto_createArray( Callisto_ExecutionContext* E, const Callisto_Handle handle =0 );
+const int Callisto_setArrayValue( Callisto_ExecutionContext* E, const Callisto_Handle array, const Callisto_Handle value, const int index =-1 );
+const int Callisto_getArrayCount( Callisto_ExecutionContext* E, const Callisto_Handle array );
+const Callisto_Handle Callisto_getArrayValue( Callisto_ExecutionContext* E, const Callisto_Handle array, const int index );
+
+const Callisto_Handle Callisto_createTable( Callisto_ExecutionContext* E, const Callisto_Handle handle =0 );
+const int Callisto_getTableCount( Callisto_ExecutionContext* E, const Callisto_Handle table );
+const int Callisto_setTableValue( Callisto_ExecutionContext* E, const Callisto_Handle table, const Callisto_Handle key, const Callisto_Handle value );
+const Callisto_Handle Callisto_getTableValue( Callisto_ExecutionContext* E, const Callisto_Handle table, const Callisto_Handle key );
+
+const Callisto_Handle Callisto_createArray( Callisto_Context* C, const Callisto_Handle handle =0 );
+const int Callisto_getArrayCount( Callisto_Context* C, const Callisto_Handle array );
+const int Callisto_setArrayValue( Callisto_Context* C, const Callisto_Handle array, const Callisto_Handle value, const int index =-1 );
+const Callisto_Handle Callisto_getArrayValue( Callisto_Context* C, const Callisto_Handle array, const int index );
+
+const Callisto_Handle Callisto_createTable( Callisto_Context* C, const Callisto_Handle handle =0 );
+const int Callisto_getTableCount( Callisto_Context* C, const Callisto_Handle table );
+const int Callisto_setTableValue( Callisto_Context* C, const Callisto_Handle table, const Callisto_Handle key, const Callisto_Handle value );
+const Callisto_Handle Callisto_getTableValue( Callisto_Context* C, const Callisto_Handle table, const Callisto_Handle key );
 
 void Callisto_releaseValue( Callisto_ExecutionContext* E, const Callisto_Handle handle );
+void Callisto_releaseValue( Callisto_Context* C, const Callisto_Handle handle );
+
+// not really implemented yet.. not even sure this is HOW I want to implement it
+const int Callisto_resume( Callisto_ExecutionContext *E, const Callisto_Handle argumentValueHandle =0 );
+const int Callisto_resume( Callisto_Context* C, const long threadId, const Callisto_Handle argumentValueHandle =0 );
+const Callisto_ThreadState Callisto_getThreadState( Callisto_ExecutionContext* E );
+const Callisto_ThreadState Callisto_getThreadState( Callisto_ExecutionContext* E, Callisto_Context* C, const long threadId );
+const long Callisto_getThreadId( Callisto_ExecutionContext* E );
+const int Callisto_yield( Callisto_ExecutionContext *E );
+const int Callisto_wait( Callisto_ExecutionContext *E, const Callisto_Handle argumentValueHandle =0 );
 
 
 #endif

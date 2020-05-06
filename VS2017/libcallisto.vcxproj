@@ -20,23 +20,38 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\source\api.cpp" />
-    <ClCompile Include="..\source\array.cpp" />
+    <ClCompile Include="..\source\callisto_file.cpp" />
+    <ClCompile Include="..\source\callisto_iterators.cpp" />
+    <ClCompile Include="..\source\callisto_json.cpp" />
+    <ClCompile Include="..\source\callisto_math.cpp" />
     <ClCompile Include="..\source\callisto_stdlib.cpp" />
     <ClCompile Include="..\source\callisto_string.cpp" />
     <ClCompile Include="..\source\cc.cpp" />
+    <ClCompile Include="..\source\event.cpp" />
     <ClCompile Include="..\source\token.cpp" />
-    <ClCompile Include="..\source\util.cpp" />
+    <ClCompile Include="..\source\value.cpp" />
     <ClCompile Include="..\source\vm.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\source\arch.h" />
     <ClInclude Include="..\source\array.h" />
-    <ClInclude Include="..\source\asciidump.hpp" />
-    <ClInclude Include="..\source\hash.hpp" />
-    <ClInclude Include="..\source\linkhash.hpp" />
-    <ClInclude Include="..\source\linklist.hpp" />
-    <ClInclude Include="..\source\log.hpp" />
-    <ClInclude Include="..\source\str.hpp" />
+    <ClInclude Include="..\source\asciidump.h" />
+    <ClInclude Include="..\source\cc.h" />
+    <ClInclude Include="..\source\event.h" />
+    <ClInclude Include="..\source\hash.h" />
+    <ClInclude Include="..\source\hashtable.h" />
+    <ClInclude Include="..\source\linkhash.h" />
+    <ClInclude Include="..\source\linkhash_value.h" />
+    <ClInclude Include="..\source\linklist.h" />
+    <ClInclude Include="..\source\locks.h" />
+    <ClInclude Include="..\source\log.h" />
+    <ClInclude Include="..\source\object_tpool.h" />
+    <ClInclude Include="..\source\random.h" />
+    <ClInclude Include="..\source\str.h" />
+    <ClInclude Include="..\source\utf8.h" />
     <ClInclude Include="..\source\util.h" />
+    <ClInclude Include="..\source\value.h" />
+    <ClInclude Include="..\source\vm.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>

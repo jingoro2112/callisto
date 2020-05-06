@@ -1,0 +1,11 @@
+re-entrant execute calls.. test all corners
+
+threading
+
+wait() .. how are events going to work?
+
+optimize switch
+
+fix hashes
+
+const?

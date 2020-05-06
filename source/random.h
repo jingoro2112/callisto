@@ -11,15 +11,14 @@ public:
 
 	int fromToInclusive( const int from, const int to ) { return (from >= to) ? from : (kiss() % ((to - from) + 1)) + from; }
 
+	void seed( unsigned int s );
+
 	inline unsigned int kiss(); // very fast and very very good
 	inline unsigned long long mtwister(); // mersenne twister, about as kickass as it gets, and only a smidge slower than kiss
-	inline bool binary(); // very fast binary randomness
 
-	inline CRandom( const unsigned int seed =0 );
+	inline CRandom( const unsigned int inputSeed =0 );
 
 private:
-
-	unsigned int m_binarySeed;
 
 	static const int CRANDOM_NN = 312;
 	static const int CRANDOM_MM = 156;
@@ -92,32 +91,23 @@ unsigned int CRandom::kiss()
 }
 
 //------------------------------------------------------------------------------
-bool CRandom::binary()
+CRandom::CRandom( unsigned int inputSeed )
 {
-	if ( m_binarySeed & 0x20000 )
-	{
-		m_binarySeed = ((m_binarySeed ^ 19) << 1) | 1;
-		return true;
-	}
-	else
-	{
-		m_binarySeed <<= 1;
-		return false;
-	}
+	seed( inputSeed ? inputSeed : (unsigned int)time(0) );
 }
 
 //------------------------------------------------------------------------------
-CRandom::CRandom( unsigned int seed )
+void CRandom::seed( unsigned int s )
 {
-	m_binarySeed = seed ? seed  : ((unsigned int)time(0) & 0x7FFFFFFF); // force positive
+	unsigned int seed = s ? s  : ((unsigned int)time(0) & 0x7FFFFFFF); // force positive
 
 	// turn the crank on a single minimal rand standard to init the mercene constant
-	const int k = m_binarySeed / 127773;
-	const int s2 = 16807 * (m_binarySeed - k * 127773) - 2836 * k;
+	const int k = seed / 127773;
+	const int s2 = 16807 * (seed - k * 127773) - 2836 * k;
 	const unsigned long long R = (s2 < 0) ? (s2 + 2147483647) : s2;
 
 	m_mti = CRANDOM_NN + 1; 
-	m_mt[0] = m_binarySeed | (R << 32);
+	m_mt[0] = seed | (R << 32);
 
 	for ( m_mti = 1; m_mti<CRANDOM_NN; m_mti++ )
 	{

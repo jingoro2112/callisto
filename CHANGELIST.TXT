@@ -1,3 +1,18 @@
+v0.2.0 -----------------------------------------------
+- LOADS of changes. More or less a complete re-write of the API and VM.
+  The previous version was "wow it works! woohoo!". Now it's time to make
+  it a bit more practical.
+
+  Best to just check the documentation, but in broad strokes:
+
+- re-implemented the VM to be more efficient and unified.
+- added correct iterator for table/array/string (doing this exposed
+  a fundamental flaw in the VM which resulted in the rework)
+- fixed a lot of little bugs from corner cases that the tests did not
+  excercise
+- changed API to be more usable
+- added a bunch of standard librarys and methods
+
 v0.1.2 ----------------------------------------------- [dev]
 - first implementation attempt at multi-threaded round-robin scheduler
   This is normally not a language spec, but I am implementing it

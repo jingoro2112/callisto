@@ -19,11 +19,11 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\source\callisto.h" />
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="..\callisto_cli.cpp" />
     <ClCompile Include="..\callisto_tests.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\include\callisto.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>

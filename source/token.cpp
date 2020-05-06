@@ -1,22 +1,35 @@
-#include "util.h"
+#include "cc.h"
+#include "utf8.h"
 
 extern CLog Log;
 
 #define D_TOKEN(a) //a
 
 //------------------------------------------------------------------------------
-bool parseAsString( Compilation& comp, Cstr& token )
+inline bool c_isspace( const wchar_t c )
 {
+	return c < 127 && isspace((char)c); 
+}
+
+//------------------------------------------------------------------------------
+bool parseAsString( Compilation& comp, Cstr& tokenReturn )
+{
+	Wstr reader;
+	Wstr token;
+	
 	while( comp.pos < comp.source.size() )
 	{
-		char c = comp.source[comp.pos++];
+		reader.clear();
+		comp.pos += UTF8ToUnicode( (unsigned char *)(comp.source.c_str() + comp.pos), reader, 1 );
+		wchar_t c = reader[0];
+		
 		if ( c == '\"' )
 		{
 			// peek ahead
 			bool append = false;
 			for( unsigned int peek = comp.pos; peek < comp.source.size(); ++peek )
 			{
-				if ( isspace(comp.source[peek]) )
+				if ( c_isspace(comp.source[peek]) )
 				{
 					continue;
 				}
@@ -32,6 +45,7 @@ bool parseAsString( Compilation& comp, Cstr& token )
 
 			if ( !append )
 			{
+				unicodeToUTF8( token, token.size(), tokenReturn );
 				return true;
 			}
 		}
@@ -55,7 +69,7 @@ bool parseAsString( Compilation& comp, Cstr& token )
 			}
 			else if ( c == '0' )
 			{
-				token += (char)atoi( comp.source.c_str( comp.pos - 1 ) );
+				token += atoi( comp.source.c_str(comp.pos - 1) );
 				for( ; (comp.pos < comp.source.size()) && isdigit(*comp.source.c_str(comp.pos)); ++comp.pos );
 			}
 			else if ( c == '\"' )
@@ -92,18 +106,21 @@ bool parseAsString( Compilation& comp, Cstr& token )
 }
 
 //------------------------------------------------------------------------------
-bool getToken( Compilation& comp, Cstr& token, Value& value )
+bool getToken( Compilation& comp, Cstr& token, CToken& value )
 {
 	comp.lastPos = comp.pos;
-	
-	clearValue( value );
+
+	value.string.clear();
+	value.i64 = 0;
 	token.clear();
+	value.type = CTYPE_NULL;
+	value.spaceBefore = (comp.pos < comp.source.size()) && isspace(comp.source[comp.pos]);
 	
 	do
 	{
 		if ( comp.pos >= comp.source.size() )
 		{
-			return true;
+			return false;
 		}
 
 	} while( isspace(comp.source[comp.pos++]) );
@@ -314,20 +331,6 @@ bool getToken( Compilation& comp, Cstr& token, Value& value )
 			D_TOKEN(Log("token '-'"));
 		}
 	}
-	else if ( token[0] == 'L' && (comp.pos < comp.source.size()) && (comp.source[comp.pos] == '\"'))
-	{
-		++comp.pos;
-		token.clear();
-
-		if ( !parseAsString(comp, token) )
-		{
-			return false;
-		}
-
-		value.type = CTYPE_WSTRING;
-		value.refWstr = new RefCountedVariable<Wstr>();
-		value.refWstr->item = Wstr(token);
-	}
 	else if ( token[0] == '\"' )
 	{
 		token.clear();
@@ -335,10 +338,9 @@ bool getToken( Compilation& comp, Cstr& token, Value& value )
 		{
 			return false;
 		}
-		
+
 		value.type = CTYPE_STRING;
-		value.refCstr = new RefCountedVariable<Cstr>();
-		value.refCstr->item = token;
+		value.string = token;
 	}
 	else if ( token[0] == '/' ) // might be a comment
 	{
@@ -427,7 +429,7 @@ bool getToken( Compilation& comp, Cstr& token, Value& value )
 			if ( token.size() <= 18 )
 			{
 				value.type = CTYPE_INT;
-				value.i64 = (int64_t)strtoull( token.c_str(2), 0, 16 );
+				value.i64 = (int64_t)strtoull( Cstr(token).c_str(2), 0, 16 );
 			}
 			else
 			{
@@ -503,12 +505,12 @@ bool getToken( Compilation& comp, Cstr& token, Value& value )
 			if ( decimal )
 			{
 				value.type = CTYPE_FLOAT;
-				value.d = atof( token );
+				value.d = atof( Cstr(token) );
 			}
 			else
 			{
 				value.type = CTYPE_INT;
-				value.i64 = (int64_t)strtoll( token, 0, 10 );
+				value.i64 = (int64_t)strtoll( Cstr(token), 0, 10 );
 			}
 		}
 	}
@@ -525,7 +527,10 @@ bool getToken( Compilation& comp, Cstr& token, Value& value )
 		}
 	}
 
-	D_TOKEN(Log("token[%s] %s", token.c_str(), (value.type == CTYPE_NULL) ? "" : formatValue(value).c_str()));
+	value.spaceAfter = (comp.pos < comp.source.size()) && isspace(comp.source[comp.pos]);
+	
+	D_TOKEN(Log("token[%s] %s", token.c_str(), (value.type == CTYPE_NULL) ? "" : formatToken(value).c_str()));
+
 	return true;
 }
 

@@ -1,36 +1,20 @@
-#include "source/util.h"
+#include "source/str.h"
+#include "include/callisto.h"
+#include "source/vm.h"
 
 #include <assert.h>
 
-Cstr log;
+Cstr logstr;
    
 //------------------------------------------------------------------------------
-Callisto_Handle emit( Callisto_ExecutionContext* F )
+Callisto_Handle emit( Callisto_ExecutionContext* E )
 {
-	for( int i=0; i<F->numberOfArgs; i++ )
+	for( int i=0; i<E->numberOfArgs; i++ )
 	{
-		log.appendFormat( "%s", formatValue(F->Args[i]).c_str() );
+		logstr.appendFormat( "%s", formatValue(E->Args[i]).c_str() );
 	}
 	
-	log += "\n";
-	return 0;
-}
-
-//------------------------------------------------------------------------------
-Callisto_Handle typeof( Callisto_ExecutionContext* F )
-{
-	switch( Callisto_getArgType(F, 0) )
-	{
-		case CTYPE_NULL: return Callisto_createValue( F, "null" ); break;
-		case CTYPE_INT: return Callisto_createValue( F, "integer" ); break;
-		case CTYPE_FLOAT: return Callisto_createValue( F, "float" ); break;
-		case CTYPE_STRING: return Callisto_createValue( F, "string" ); break;
-		case CTYPE_WSTRING: return Callisto_createValue( F, "wstring" ); break;
-		case CTYPE_UNIT: return Callisto_createValue( F, "unit" ); break;
-		case CTYPE_TABLE: return Callisto_createValue( F, "table" ); break;
-		case CTYPE_ARRAY: return Callisto_createValue( F, "array" ); break;
-	}
-
+	logstr += "\n";
 	return 0;
 }
 
@@ -38,84 +22,104 @@ Callisto_Handle typeof( Callisto_ExecutionContext* F )
 const Callisto_FunctionEntry logFuncs[]=
 {
 	{ "log", emit, 0 },
-	{ "typeof", typeof, 0 },
 };
 
 //------------------------------------------------------------------------------
-int Callisto_tests( int runTest )
+void trace( const char* code, const unsigned int line, const unsigned int col, const int thread )
+{
+	printf( "%s", code );
+}
+
+//------------------------------------------------------------------------------
+int Callisto_tests( int runTest, bool debug )
 {
 	Cstr code;
 	Cstr codeName;
 
-	int index = 1;
-	if ( runTest != 0 )
+	int err = 0;
+
+	assert( O_LAST <= 254 ); // opcodes MUST fit into 8 bits, don't accidentally blow this :P
+
+	FILE* tfile = fopen( "test_files.txt", "r" );
+	char buf[256];
+	int fileNumber = 0;
+	while( fgets(buf, 255, tfile) )
 	{
-		index = runTest;
+		if ( !runTest || (runTest == fileNumber) )
+		{
+			Cstr expect;
+
+			codeName = buf;
+			codeName.trim();
+			if ( code.fileToBuffer(codeName) )
+			{
+				unsigned int t = 0;
+
+				for( ; (t < code.size()) && (code[t] != '~'); ++t );
+
+				t += 2;
+
+				for( ; t<code.size() && (code[t] != '~'); ++t )
+				{
+					expect += code[t];
+				}
+
+				//printf( "Code expecting [%s]\n", expect.c_str() );
+
+				printf( "test [%d][%s]: ", fileNumber, codeName.c_str() );
+
+//				for(;;)
+//				for( int i=0; i<10; ++i )
+				{
+					Callisto_RunOptions options;
+					options.traceCallback = debug ? trace : 0;
+					Callisto_Context C( &options );
+
+					Callisto_importFunctionList( &C, logFuncs, sizeof(logFuncs) / sizeof(Callisto_FunctionEntry) );
+					Callisto_importAll( &C );
+
+//					for( int j=0;j<10;++j )
+					{
+						logstr.clear();
+						err = Callisto_run( &C, code.c_str(), code.size() );
+						if ( err )
+						{
+							printf( "execute error[%d] with [%s]\n", err, codeName.c_str() );
+							break;
+						}
+					}
+				}
+
+				if ( logstr != expect )
+				{
+					printf( "error: expected\n"
+							"-----------------------------\n"
+							"%s\n"
+							"saw:-------------------------\n"
+							"%s"
+							"\n"
+							"-----------------------------\n",
+							expect.c_str(), logstr.c_str() );
+					
+					break;
+				}
+
+				printf( "PASS\n" );
+
+				if ( runTest )
+				{
+					break;
+				}
+			}
+			else if ( fileNumber != 0 )
+			{
+				printf( "test [%d][%s]: FILE NOT FOUND\n", fileNumber, codeName.c_str() );
+			}
+		}
+
+		fileNumber++;
 	}
 
-	Cstr expect;
-
-	for(;;++index)
-	{
-		codeName.format( "tests/test_%d.c", index );
-		if ( !code.fileToBuffer(codeName) )
-		{
-			break;
-		}
-
-		log.clear();
-		expect.clear();
-
-		unsigned int t = 0;
-		
-		for( ; (t < code.size()) && (code[t] != '~'); ++t );
-		
-		t += 2;
-		
-		for( ; t<code.size() && (code[t] != '~'); ++t )
-		{
-			expect += code[t];
-		}
-
-		//printf( "Code expecting [%s]\n", expect.c_str() );
-
-		printf( "test [%d]: ", index );
-			
-		Callisto_Context C;
-		Callisto_importList( &C, logFuncs, sizeof(logFuncs) / sizeof(Callisto_FunctionEntry) );
-
-		Callisto_importStdlib( &C );
-		Callisto_importString( &C );
-
-		Callisto_ExecutionContext* E = Callisto_createExecutionContext( &C );
-
-		int err = Callisto_load( E, code.c_str(), code.size() );
-		if ( err )
-		{
-			printf( "execute error[%d] with [%s]\n", err, codeName.c_str() );
-			return index;
-		}
-
-		if ( log != expect )
-		{
-			printf( "error: expected\n"
-					"-----------------------------\n"
-					"%s\n"
-					"saw:-------------------------\n"
-					"%s"
-					"\n"
-					"-----------------------------\n",
-					expect.c_str(), log.c_str() );
-			return index;
-		}
-
-		printf( "PASS\n" );
-		
-		if ( runTest )
-		{
-			break;
-		}
-	}
-
-	return 0;
+	fclose( tfile );
+	return err;
 }
