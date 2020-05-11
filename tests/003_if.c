@@ -53,7 +53,3 @@ if ( null != null )
 {
 	log( "null NOT okay" );
 }
-
-
-
-

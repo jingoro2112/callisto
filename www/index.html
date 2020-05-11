@@ -273,8 +273,8 @@ provided in the api to support unicode painlessly
 <hr><h2><a name="unit">2.1 unit</a></h2>
 
 <ul>
-<li>The <a href="#unit">unit</a> is <b>the concept</b> that makes callisto work. It does the job of functions, structs and
-classes. Units can be nested, and support multiple inheritance. Any
+<li>The <a href="#unit">unit</a> is <b>the concept</b> that makes callisto work. It does the job of function, struct and
+class. Units can be nested, and support multiple inheritance. Any
 unit can either be called statically or instantiated. This simplification is one of the cornerstones
 of callisto.
 
@@ -1051,7 +1051,7 @@ a + b == "some stringsome other string";</pre></code>
 
 <hr><p><h2><a name="imoprt">5.16 import</a></h2>
 Callisto can import scripts directly, the function is of the form:
-<pre><code>import( string, [,debug flag(1,0)] );
+<pre><code>import( string [,debug flag(1,0)] );
 </pre></code>
 The string can be either pre-compiled byte-code or plaintext, the type
 is automatically detected, so for example:
@@ -1071,7 +1071,7 @@ a name collision the new unit will clobber the old one, so:
 
 foo(); // this will output "foo1"
 
-import( "unit foo() { print("2 foo!!"); }" );
+import( "unit foo() { print(\"2 foo!!\"); }" );
 
 foo(); // this will output "2 foo!!" having been clobbered by the import
 </pre></code>

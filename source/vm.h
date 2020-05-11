@@ -5,8 +5,7 @@
 #include "../include/callisto.h"
 
 #include <stdlib.h>
-#include <stdint.h>
-
+#include "portable_endian.h"
 #include "value.h"
 #include "object_tpool.h"
 #include "linkhash.h"
@@ -25,7 +24,6 @@
 extern CLog Log;
 
 extern int g_Callisto_lastErr;
-extern int g_Callisto_warn;
 
 struct ExecutionFrame;
 
@@ -34,7 +32,11 @@ struct ExecutionFrame;
 // units and values keyed by label
 struct Callisto_ExecutionContext
 {
-	int numberOfArgs;
+	char state;
+	char threadId;
+	char numberOfArgs;
+	char warning;
+			
 	Value* Args;
 	Value object; // if something calls this is the thing that called
 	void* userData;
@@ -46,9 +48,6 @@ struct Callisto_ExecutionContext
 	ExecutionFrame* frame;
 	unsigned int textOffsetToResume;
 	
-	long threadId;
-	Callisto_ThreadState state;
-
 	static CObjectTPool<ExecutionFrame> m_framePool;
 
 	Callisto_Context* callisto;
@@ -73,17 +72,17 @@ struct Callisto_ExecutionContext
 //------------------------------------------------------------------------------
 struct ExecutionFrame
 {
-	int returnVector;
-	int onParent;
+	unsigned int returnVector;
+	
 	int numberOfArguments;
-	Value unitContainer; // autoritative location of Definition and namespace
+	Value unitContainer; // autoritative location of definition and namespace
 	ExecutionFrame* next;
 
-	static void clear( ExecutionFrame& F ) 
+	static void clear( ExecutionFrame& F )
 	{
 		clearValue( F.unitContainer );
 	}
-
+	
 	ExecutionFrame() { unitContainer.type32 = CTYPE_NULL; unitContainer.i64 = 0; }
 };
 
@@ -119,20 +118,20 @@ struct Callisto_Context
 	
 	Cstr text; // code hangs here
 	CLinkList<TextSection> textSections;
-	CHashTable<Cstr> symbols; // to reverse hashes (if loaded)
+	CLinkHash<Cstr> symbols; // to reverse hashes (if loaded)
 	
 	Cstr err; // if an error is returned, it is loaded here
 
 	Value rootUnit;
-	CHashTable<Value>* globalNameSpace; // cached from the above
+	CLinkHash<Value>* globalNameSpace; // cached from the above
 		
-	CHashTable<UnitDefinition> unitDefinitions;
-	CHashTable<CHashTable<UnitDefinition>> typeFunctions;
+	CLinkHash<UnitDefinition> unitDefinitions;
+	CLinkHash<CLinkHash<UnitDefinition>> typeFunctions;
 
 	CLinkHash<Callisto_ExecutionContext> threads; // independant threads operating in this space
 	CLinkHash<Callisto_ExecutionContext>::Iterator scheduler;
 	
-	long threadIdGenerator;
+	char threadIdGenerator;
 	
 	Callisto_Context( const Callisto_RunOptions* opt =0 )
 	{
@@ -156,6 +155,14 @@ struct Callisto_Context
 	}
 };
 
+//------------------------------------------------------------------------------
+enum SwitchFlags
+{
+	SWITCH_HAS_NULL = 1<<0,
+	SWITCH_HAS_DEFAULT = 1<<1,
+	SWITCH_HAS_ZERO = 1<<2,
+};
+
 int execute( Callisto_ExecutionContext* E );
 
 const Cstr& formatSymbol( Callisto_Context* C, unsigned int key );
@@ -166,7 +173,8 @@ void dumpStack( Callisto_ExecutionContext* E );
 void dumpSymbols( Callisto_Context* C );
 Callisto_ExecutionContext* getExecutionContext( Callisto_Context* C, const long threadId =0 );
 
-#define popOne(E) { Value& V = *((E)->stack + --(E)->stackPointer); clearValue(V); }
+#define popOne(E) { Value* V = ((E)->stack + --(E)->stackPointer); clearValue(*V); }
+#define popOneOnly(E) { --(E)->stackPointer); }
 #define popNum(E,n) { for( int i=0; i<(n); ++i ) { popOne(E); } }
 #define getValueFromArg(E, arg)	(((E)->numberOfArgs > (arg)) ? (((E)->Args[(arg)].type == CTYPE_REFERENCE) ? (E)->Args[(arg)].v : (E)->Args + (arg)) : 0)
 
@@ -267,22 +275,6 @@ inline void ensureStack( Callisto_ExecutionContext* E )
 	delete[] old;
 }
 
-#define BINARY_ARG_SETUP \
-Value* from = E->stack + (E->stackPointer - operand1); \
-Value* to = E->stack + (E->stackPointer - operand2); \
-Value* destination = to; \
-from = (from->type == CTYPE_REFERENCE) ? from->v : from; \
-to = (to->type == CTYPE_REFERENCE) ? to->v : to; \
-to->flags &= ~VFLAG_HASH_COMPUTED; \
-D_ARG_SETUP(Log("Binary arg setup from operand1[%d] to operand2[%d]", E->stackPointer - operand2, E->stackPointer - operand1)); \
-
-#define UNARY_ARG_SETUP \
-Value* value = E->stack + (E->stackPointer - operand); \
-Value* destination = value; \
-value = (value->type == CTYPE_REFERENCE) ? value->v : value; \
-value->flags &= ~VFLAG_HASH_COMPUTED; \
-D_ARG_SETUP(Log("Unary arg setup from operand[%d]", E->stackPointer - operand)); \
-
 struct CodeHeader
 {
 	int32_t version;
@@ -306,7 +298,9 @@ inline Value* getNextStackEntry( Callisto_ExecutionContext *E )
 //------------------------------------------------------------------------------
 inline void doLogicalNot( Callisto_ExecutionContext* E, const int operand )
 {
-	UNARY_ARG_SETUP;
+	Value* value = E->stack + (E->stackPointer - operand);
+	Value* destination = value;
+	value = (value->type == CTYPE_REFERENCE) ? value->v : value;
 
 	int result = value->i64 ? 0 : 1;
 	clearValue( *destination );
@@ -321,14 +315,17 @@ inline void doLogicalNot( Callisto_ExecutionContext* E, const int operand )
 	}
 	else
 	{
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 inline void doBitwiseNot( Callisto_ExecutionContext* E, const int operand )
 {
-	UNARY_ARG_SETUP;
+	Value* value = E->stack + (E->stackPointer - operand);
+	Value* destination = value;
+	value = (value->type == CTYPE_REFERENCE) ? value->v : value;
+
 	int64_t result = ~value->i64;
 	clearValue( *destination );
 
@@ -348,7 +345,7 @@ inline void doPostIncrement( Callisto_ExecutionContext* E, const int operand )
 	if ( value->type != CTYPE_REFERENCE )
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_LiteralPostOperatorNotPossible;
+		E->warning = CE_LiteralPostOperatorNotPossible;
 	}
 	else
 	{
@@ -373,7 +370,7 @@ inline void doPostIncrement( Callisto_ExecutionContext* E, const int operand )
 		}
 		else
 		{
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 			clearValue( *destination );
 		}
 	}
@@ -388,7 +385,7 @@ inline void doPostDecrement( Callisto_ExecutionContext* E, const int operand )
 	if ( value->type != CTYPE_REFERENCE )
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_LiteralPostOperatorNotPossible;
+		E->warning = CE_LiteralPostOperatorNotPossible;
 	}
 	else
 	{
@@ -413,7 +410,7 @@ inline void doPostDecrement( Callisto_ExecutionContext* E, const int operand )
 		}
 		else
 		{
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 			clearValue( *destination );
 		}
 	}
@@ -422,8 +419,9 @@ inline void doPostDecrement( Callisto_ExecutionContext* E, const int operand )
 //------------------------------------------------------------------------------
 inline void doPreIncrement( Callisto_ExecutionContext* E, const int operand )
 {
-	UNARY_ARG_SETUP;
-	destination = destination;
+	Value* value = E->stack + (E->stackPointer - operand);
+	Value* destination = value;
+	value = (value->type == CTYPE_REFERENCE) ? value->v : value;
 
 	if ( value->type == CTYPE_INT )
 	{
@@ -437,15 +435,17 @@ inline void doPreIncrement( Callisto_ExecutionContext* E, const int operand )
 	}
 	else
 	{
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
+		clearValue( *destination );
 	}
 }
 
 //------------------------------------------------------------------------------
 inline void doPreDecrement( Callisto_ExecutionContext* E, const int operand )
 {
-	UNARY_ARG_SETUP;
-	destination = destination;
+	Value* value = E->stack + (E->stackPointer - operand);
+	Value* destination = value;
+	value = (value->type == CTYPE_REFERENCE) ? value->v : value;
 
 	if ( value->type == CTYPE_INT )
 	{
@@ -459,7 +459,8 @@ inline void doPreDecrement( Callisto_ExecutionContext* E, const int operand )
 	}
 	else
 	{
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
+		clearValue( *destination );
 	}
 }
 

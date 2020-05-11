@@ -12,6 +12,13 @@
 #include "str.h"
 
 //------------------------------------------------------------------------------
+enum ValueFlags
+{
+	VFLAG_HASH_COMPUTED = 1<<0,
+	VFLAG_CONST = 1<<1,
+};
+
+//------------------------------------------------------------------------------
 enum ValueTypeBits
 {
 	// first 4 bits are consumed by the type
@@ -20,6 +27,13 @@ enum ValueTypeBits
 	BIT_CAN_HASH = 1<<4,
 	BIT_CAN_LOGIC = 1<<5,
 	BIT_PASS_BY_VALUE = 1<<6,
+	BIT_COMPARE_DIRECT = 1<<7,
+
+	// TODO: theoretically these can be OR'ed in for direct assign when the
+	// hash is known to be pre-computed, but check endian-ness before
+	// comitting to the optimization
+	BIT_VFLAG_HASH_COMPUTED = (VFLAG_HASH_COMPUTED)<<24,
+	BIT_VFLAG_CONT = (VFLAG_CONST)<<24,
 };
 
 //------------------------------------------------------------------------------
@@ -35,10 +49,10 @@ enum ValueType
 	CTYPE_STRING   = 6 | BIT_CAN_HASH, // so switch on "by ref" can be optimal
 
 	CTYPE_NULL     = 7 | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE,
-	CTYPE_INT      = 8 | BIT_CAN_HASH | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE,
-	CTYPE_FLOAT    = 9 | BIT_CAN_HASH | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE,
+	CTYPE_INT      = 8 | BIT_CAN_HASH | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE | BIT_COMPARE_DIRECT,
+	CTYPE_FLOAT    = 9 | BIT_CAN_HASH | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE | BIT_COMPARE_DIRECT,
 
-	// 10 reserved
+	CTYPE_FRAME    = 10 | BIT_PASS_BY_VALUE,
 	// 11 reserved
 	// 12 reserved
 	// 13 reserved
@@ -56,12 +70,7 @@ inline void clearValueFunc( Value& V );
 
 void clearValueRef( Value& Value );
 #define clearValue(V) { if ( !((V).type & BIT_PASS_BY_VALUE) ) { clearValueRef(V); } (V).type32 = CTYPE_NULL; (V).i64 = 0; } 
-
-enum ValueFlags
-{
-	VFLAG_HASH_COMPUTED = 1<<0,
-	VFLAG_CONST = 1<<1,
-};
+#define clearValueOnly(V) { if ( !((V).type & BIT_PASS_BY_VALUE) ) { clearValueRef(V); } } 
 
 //------------------------------------------------------------------------------
 struct ValueIterator
@@ -79,21 +88,21 @@ struct Value
 		Carray<Value>* array;
 		Cstr* string;
 		CLinkHash<CKeyValue>* tableSpace; // for units or tables
-		CHashTable<Value>* unitSpace; // for units or tables
+		CLinkHash<Value>* unitSpace; // for units or tables
 		ExecutionFrame* frame;
 		void* hashIterator; // hang iterators from here
 
-		void* ref2; // must be the size of the largest member for quick equates
+		void* ref2; // must be the size of the largest member for quick equates (which might be only 32 bits, this union has pointers only)
 	};
 
 	union // contains explicit 64-bit values, so on 32-bit machines void* is not large enough for ref1
 	{
 		// if this is a value, this is where it is stored
 		int64_t i64; 
+		uint64_t precomputedHash;
 		double d;
 		Value* v; // if this is a reference, this points to the actual value
 		UnitDefinition* u; // if this is a CTYPE_UNIT, this is a pointer to the Unit, and it may have valid children
-		unsigned int precomputedHash; // for strings
 		ValueIterator* iterator;
 		
 		int64_t ref1; // must be the size of the largest member for quick equates
@@ -112,33 +121,21 @@ struct Value
 		};
 	};
 
-	unsigned int getHash()
+	uint64_t getHash()
 	{
-		if ( flags & VFLAG_HASH_COMPUTED )
+		if ( (flags & VFLAG_HASH_COMPUTED) || (type & BIT_PASS_BY_VALUE) )
 		{
-			return precomputedHash;
-		}
-		else if ( type & BIT_CAN_HASH )
-		{
-			if ( type == CTYPE_STRING )
-			{
-				flags |= VFLAG_HASH_COMPUTED;
-				return precomputedHash = hash( string->c_str(), string->size() );
-			}
-
-			unsigned int u = (unsigned int)(i64 >> 32);
-			if ( (u > 0) && (u < 0xFFFFFFFF) )
-			{
-				return u ^ (unsigned int)i64;
-			}
-			else
-			{
-				flags |= VFLAG_HASH_COMPUTED;
-				return precomputedHash;
-			}
+//			return precomputedHash;
 		}
 
-		return 0;
+		flags |= VFLAG_HASH_COMPUTED;
+		
+		if ( type == CTYPE_STRING )
+		{
+			precomputedHash = hash64( string->c_str(), string->size() );
+		}
+
+		return precomputedHash;
 	}
 
 	void allocArray() { type32 = CTYPE_ARRAY; array = m_arrayPool.get(); array->setClearFunction(clearValueFunc); }
@@ -152,7 +149,7 @@ struct Value
 	static CObjectTPool<Value> m_valuePool;
 	static CObjectTPool<ValueIterator> m_iteratorPool;
 
-	static CObjectTPool<CHashTable<Value>> m_unitSpacePool;
+	static CObjectTPool<CLinkHash<Value>> m_unitSpacePool;
 
 	static void clear( Value& V ) { clearValue(V); }
 	
@@ -181,7 +178,7 @@ struct UnitDefinition
 	Callisto_CallbackFunction function; // what to call if this is a C function palceholder
 	void* userData;
 
-	CHashTable<ChildUnit> childUnits; // list of units this unit is parent to
+	CLinkHash<ChildUnit> childUnits; // list of units this unit is parent to
 
 	UnitDefinition() { member = false; }
 };
@@ -220,7 +217,6 @@ inline bool recycleValue( Value& Value, int type )
 //------------------------------------------------------------------------------
 inline void valueMove( Value* target, Value* source )
 {
-	clearValue( *target );
 	target->type32 = source->type;
 	target->ref1 = source->ref1;
 	target->ref2 = source->ref2;
@@ -248,6 +244,7 @@ inline void valueSwap( Value* v1, Value* v2 )
 //------------------------------------------------------------------------------
 void deepCopyEx( Value* target, Value* source );
 
+//------------------------------------------------------------------------------
 inline void deepCopy( Value* target, Value* source )
 {
 	Value* from = (source->type == CTYPE_REFERENCE) ? source->v : source;

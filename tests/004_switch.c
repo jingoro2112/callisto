@@ -1,4 +1,17 @@
 /*~
+c
+1c
+c
+d
+1b
+d
+d
+d
+d
+1a
+1
+null
+zero
 zero
 zero
 zero!
@@ -28,9 +41,73 @@ default
 2
 3
 4
+N
 6
+N
 8
 ~*/
+
+// some degenerate cases..
+for( k = 0; k<3; ++k )
+{
+	switch( k )
+	{
+		default: log( "c" ); break;
+		case 1: log( "1c" ); break;
+	}
+}
+
+for( k = 0; k<3; ++k )
+{
+	switch( k )
+	{
+		case 1: log( "1b" ); break;
+		default: log( "d" ); break;
+	}
+}
+
+for( k = 0; k<3; ++k )
+{
+	switch( k )
+	{
+		default: log( "d" );
+	}
+}
+
+for( k = 0; k<3; ++k )
+{
+	switch( k )
+	{
+	}
+}
+
+for( k = 0; k<3; ++k )
+{
+	switch( k )
+	{
+		case 1: log( "1a" );
+	}
+}
+
+for( k = 0; k<3; ++k )
+{
+	switch( k )
+	{
+		case 1: log( "1" ); break;
+	}
+}
+
+switch( null )
+{
+	case 0: log("zero"); break;
+	case null: log("null"); break;
+}
+
+switch( 0 )
+{
+	case 0: log("zero"); break;
+	case null: log("null"); break;
+}
 
 for( i=0; i<6; i++ )
 {
@@ -168,5 +245,6 @@ for( k = 5000000000 ; k < 5000000009; ++k )
 		case 5000000006: log( "6" ); break;
 		case 5000000008: log( "8" ); break;
 		case 5000000009: log( "9" ); break;
+		default: log( "N" ); break;
 	}
 }

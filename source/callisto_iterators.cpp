@@ -142,7 +142,7 @@ Callisto_Handle Callisto_tableFuncInsert( Callisto_ExecutionContext* E )
 		Value* key = getValueFromArg( E, 0 );
 		if ( key->type & BIT_CAN_HASH )
 		{
-			int hash = key->getHash();
+			unsigned int hash = (unsigned int)key->getHash();
 			CKeyValue* KV = E->object.tableSpace->get( hash );
 			if ( !KV )
 			{
@@ -176,7 +176,7 @@ Callisto_Handle Callisto_static_tableFuncRemove( Callisto_ExecutionContext* E )
 		Value* key = getValueFromArg( E, 0 );
 		if ( key->type & BIT_CAN_HASH )
 		{
-			E->object.tableSpace->remove( key->getHash() );
+			E->object.tableSpace->remove( (unsigned int)key->getHash() );
 		}
 	}
 	
@@ -194,7 +194,7 @@ Callisto_Handle Callisto_static_tableFuncInsert( Callisto_ExecutionContext* E )
 			Value* key = getValueFromArg( E, 1 );
 			if ( key->type & BIT_CAN_HASH )
 			{
-				int hash = key->getHash();
+				unsigned int hash = (unsigned int)key->getHash();
 				CKeyValue* KV = E->object.tableSpace->get( hash );
 				if ( !KV )
 				{

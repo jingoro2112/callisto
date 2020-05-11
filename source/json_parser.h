@@ -93,7 +93,7 @@ public:
 	const bool isNull() const { return m_type == JNULL; }
 
 	const bool exists() const { return this != &m_deadValue; }
-	const bool exists( const char* key ) const { return exists() && m_values->get( hashStr(key) ); }
+	const bool exists( const char* key ) const { return exists() && m_values->get( hash32(key,strlen(key)) ); }
 	const bool exists( const int index ) const { return exists() && m_values->get( index ); }
 
 	// does not validate that this object IS what is being requested,
@@ -216,7 +216,7 @@ const JsonValue& JsonValue::operator[]( const char* key ) const
 		return m_deadValue.null();
 	}
 
-	unsigned int hash = hashStr(key);
+	unsigned int hash = hash32(key, strlen(key));
 	JsonValue *V = m_values->get( hash );
 	return V ? *V : m_deadValue.null();
 	
@@ -255,7 +255,7 @@ JsonValue& JsonValue::operator[]( const char* key )
 		return m_deadValue.null();
 	}
 
-	unsigned int hash = hashStr(key);
+	unsigned int hash = hash32(key,strlen(key));
 	JsonValue *V = m_values->get( hash );
 
 	if ( !V )
@@ -561,7 +561,7 @@ AddElement:
 					}
 					buf++; // skip marker
 
-					JsonValue* val = m_values->add( hashStr(m_str) );
+					JsonValue* val = m_values->add( hash32(m_str, m_str.size()) );
 
 					m_values->firstLinkToLast();
 

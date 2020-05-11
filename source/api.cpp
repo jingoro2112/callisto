@@ -40,7 +40,7 @@ void Callisto_importFunctionList( Callisto_Context* C, const Callisto_FunctionEn
 {
 	for( int i=0; i<numberOfEntries; i++ )
 	{
-		unsigned int key = hashStr(entries[i].functionName);
+		unsigned int key = hash32(entries[i].functionName, strlen(entries[i].functionName) );
 
 		UnitDefinition* unitDefinition = C->unitDefinitions.get( key );
 		if ( unitDefinition )
@@ -169,7 +169,7 @@ int runSchedule( Callisto_Context *C )
 				if ( E->stackPointer != 1 )
 				{
 					popNum( E, (E->stackPointer - 1) );
-					g_Callisto_warn = CE_StackNotEmptyAtExecutionComplete;
+					E->warning = CE_StackNotEmptyAtExecutionComplete;
 				}
 
 				C->scheduler.removeCurrent();
@@ -193,11 +193,14 @@ int runSchedule( Callisto_Context *C )
 }
 
 //------------------------------------------------------------------------------
-static Callisto_Handle s_handle = 0;
 inline Callisto_Handle getUniqueHandle( Callisto_Context* C, Value** val )
 {
+	static Callisto_Handle s_handle = 0;
+	
 	while( C->globalNameSpace->get(++s_handle) );
+	
 	*val = C->globalNameSpace->add( s_handle);
+	
 	return s_handle;
 }
 
@@ -236,7 +239,7 @@ int Callisto_runFileCompiled( Callisto_Context* C, const char* fileName, const C
 int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 {
 	const CodeHeader *header = (CodeHeader *)inData;
-	if ( (inLen < sizeof(CodeHeader)) || (ntohl(header->CRC) != hash(header, sizeof(CodeHeader) - 4)) )
+	if ( (inLen < sizeof(CodeHeader)) || (ntohl(header->CRC) != hash32(header, sizeof(CodeHeader) - 4)) )
 	{
 		return g_Callisto_lastErr = CE_DataErr;
 	}
@@ -347,10 +350,10 @@ int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 	}
 
 	// now that all the units are loaded, set up the children
-	CHashTable<UnitDefinition>::Iterator iter( C->unitDefinitions );
+	CLinkHash<UnitDefinition>::Iterator iter( C->unitDefinitions );
 	for( UnitDefinition* U = iter.getFirst(); U; U = iter.getNext() )
 	{
-		CHashTable<ChildUnit>::Iterator iter2(U->childUnits);
+		CLinkHash<ChildUnit>::Iterator iter2(U->childUnits);
 		for( ChildUnit* child = iter2.getFirst(); child; child = iter2.getNext() )
 		{
 			UnitDefinition* unit = C->unitDefinitions.get( child->key );
@@ -386,7 +389,7 @@ int Callisto_runCompiled( Callisto_Context* C,
 		Value* val = getValueFromHandle( C, argumentValueHandle );
 		if ( val )
 		{
-			unsigned int key = hashStr( "_argv" );
+			unsigned int key = hash32( "_argv", 5 );
 			Value *arg = C->globalNameSpace->get( key );
 			if ( !arg )
 			{
@@ -394,7 +397,7 @@ int Callisto_runCompiled( Callisto_Context* C,
 			}
 			else
 			{
-				clearValue( *arg );
+				clearValueOnly( *arg );
 			}
 
 			valueMove( arg, val );
@@ -432,7 +435,7 @@ const Callisto_Handle Callisto_call( Callisto_Context* C, const char* unitName, 
 //------------------------------------------------------------------------------
 const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* unitName, const Callisto_Handle* argumentValueHandleList )
 {
-	UnitDefinition *U = E->callisto->unitDefinitions.get( hashStr(unitName) );
+	UnitDefinition *U = E->callisto->unitDefinitions.get( hash32(unitName, strlen(unitName)) );
 	if ( !U )
 	{
 		g_Callisto_lastErr = CE_UnitNotFound;
@@ -444,9 +447,9 @@ const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* u
 	E->numberOfArgs = 0;
 	if ( argumentValueHandleList )
 	{
-		for( ; argumentValueHandleList[E->numberOfArgs]; ++E->numberOfArgs )
+		for( ; argumentValueHandleList[(int)E->numberOfArgs]; ++E->numberOfArgs )
 		{
-			if ( !(val = getValueFromHandle(E->callisto, argumentValueHandleList[E->numberOfArgs])) )
+			if ( !(val = getValueFromHandle(E->callisto, argumentValueHandleList[(int)E->numberOfArgs])) )
 			{
 				g_Callisto_lastErr = CE_HandleNotFound;
 				return 0;
@@ -472,12 +475,12 @@ const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* u
 	else
 	{
 		val = getNextStackEntry( E ); // create a call-frame
+		val->type32 = CTYPE_FRAME;
 		val->frame = Callisto_ExecutionContext::m_framePool.get();
 
 		val->frame->next = E->frame;
 		E->frame = val->frame;
 
-		val->frame->onParent = 0;
 		val->frame->unitContainer.u = U;
 		val->frame->unitContainer.unitSpace = Value::m_unitSpacePool.get();
 		val->frame->unitContainer.type32 = CTYPE_UNIT;
@@ -489,7 +492,9 @@ const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* u
 
 		Callisto_Handle ret = setValueSetup( E->callisto, 0, &val );
 
-		valueMove( getValueFromHandle(E->callisto, ret), E->stack + (E->stackPointer - 1) );
+		val = getValueFromHandle( E->callisto, ret );
+		clearValueOnly( *val );
+		valueMove( val, E->stack + (E->stackPointer - 1) );
 
 		popNum( E, E->numberOfArgs + 2 ); // args plus frame plus return value
 
@@ -501,7 +506,7 @@ const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* u
 const int Callisto_yield( Callisto_ExecutionContext *E )
 {
 	// when the C function returns, the VM will wait it
-	E->state = Callisto_ThreadState::Waiting;
+	E->warning = (char)0x80;
 	return CE_NoError;
 }
 
@@ -862,7 +867,7 @@ void Callisto_setTypeMethods( Callisto_Context* C, const Callisto_ArgType type, 
 {
 	int vtype = valueTypeFromUserType( type );
 	
-	CHashTable<UnitDefinition>* table = C->typeFunctions.get( vtype );
+	CLinkHash<UnitDefinition>* table = C->typeFunctions.get( vtype );
 	if ( !table )
 	{
 		table = C->typeFunctions.add( vtype );
@@ -870,7 +875,7 @@ void Callisto_setTypeMethods( Callisto_Context* C, const Callisto_ArgType type, 
 
 	for( int i=0; i<numberOfEntries; i++ )
 	{
-		unsigned int key = hashStr(entries[i].functionName);
+		unsigned int key = hash32( entries[i].functionName, strlen(entries[i].functionName) );
 		UnitDefinition* M = table->get( key );
 		if ( !M )
 		{
@@ -1024,6 +1029,7 @@ const int Callisto_setArrayValue( Callisto_Context* C, const Callisto_Handle arr
 	val = C->globalNameSpace->get( value );
 	if ( val )
 	{
+		clearValueOnly( target );
 		valueMove( &target, val );
 		Callisto_releaseValue( C, value );
 	}
@@ -1097,9 +1103,12 @@ const int Callisto_setTableValue( Callisto_Context* C, const Callisto_Handle tab
 		return CE_HandleNotFound;
 	}
 
-	unsigned int hash = kval->getHash();
+	unsigned int hash = (unsigned int)kval->getHash();
 	CKeyValue* tableEntry = tableHandle->tableSpace->add( hash );
 
+	clearValueOnly( tableEntry->key );
+	clearValueOnly( tableEntry->value );
+	
 	valueMirror( &tableEntry->key, kval );
 	valueMirror( &tableEntry->value, vval );
 	
@@ -1131,7 +1140,7 @@ void Callisto_releaseValue( Callisto_Context* C, const Callisto_Handle handle )
 //------------------------------------------------------------------------------
 const Callisto_ThreadState Callisto_getThreadState( Callisto_ExecutionContext* E )
 {
-	return E->state;
+	return (Callisto_ThreadState)E->state;
 }
 
 //------------------------------------------------------------------------------
@@ -1149,7 +1158,7 @@ int Callisto_importConstant( Callisto_ExecutionContext* E, const char* name, con
 //------------------------------------------------------------------------------
 int Callisto_importConstant( Callisto_Context* C, const char* name, const Callisto_Handle handle )
 {
-	unsigned int key = hashStr( name );
+	unsigned int key = hash32( name, strlen(name) );
 
 	Value* hval = getValueFromHandle( C, handle );
 	if ( !hval )
@@ -1161,6 +1170,10 @@ int Callisto_importConstant( Callisto_Context* C, const char* name, const Callis
 	if ( !V )
 	{
 		V = C->globalNameSpace->add( key );
+	}
+	else
+	{
+		clearValueOnly( *V );
 	}
 
 	valueMove( V, hval );

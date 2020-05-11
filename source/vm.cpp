@@ -8,7 +8,6 @@
 #include "object_tpool.h"
 
 int g_Callisto_lastErr = CE_NoError;
-int g_Callisto_warn = CE_NoError;
 
 #define D_EXECUTE(a) //a
 #define D_DUMPSTACK(a) //a
@@ -27,11 +26,10 @@ int g_Callisto_warn = CE_NoError;
 
 CObjectTPool<ExecutionFrame> Callisto_ExecutionContext::m_framePool( 4, ExecutionFrame::clear );
 
-template<> CObjectTPool<CHashTable<CHashTable<UnitDefinition>>::Node> CHashTable<CHashTable<UnitDefinition>>::m_hashNodes( 0 );
-
-template<> CObjectTPool<CHashTable<UnitDefinition>::Node> CHashTable<UnitDefinition>::m_hashNodes( 6 );
-template<> CObjectTPool<CHashTable<Cstr>::Node> CHashTable<Cstr>::m_hashNodes( 32 );
-template<> CObjectTPool<CHashTable<ChildUnit>::Node> CHashTable<ChildUnit>::m_hashNodes( 32 );
+template<> CObjectTPool<CLinkHash<CLinkHash<UnitDefinition>>::Node> CLinkHash<CLinkHash<UnitDefinition>>::m_linkNodes( 0 );
+template<> CObjectTPool<CLinkHash<UnitDefinition>::Node> CLinkHash<UnitDefinition>::m_linkNodes( 6 );
+template<> CObjectTPool<CLinkHash<Cstr>::Node> CLinkHash<Cstr>::m_linkNodes( 16 );
+template<> CObjectTPool<CLinkHash<ChildUnit>::Node> CLinkHash<ChildUnit>::m_linkNodes( 16 );
 
 //------------------------------------------------------------------------------
 void lineFromCode( Callisto_Context* context, unsigned int base, unsigned int pos,
@@ -57,8 +55,7 @@ void lineFromCode( Callisto_Context* context, unsigned int base, unsigned int po
 
 	if ( context->text[begin] != '\n' )
 	{
-		// begining of code
-		--begin;
+		--begin; // begining of code
 	}
 
 	unsigned int c = (pos + base) - begin;
@@ -152,19 +149,31 @@ int execute( Callisto_ExecutionContext *exec )
 	unsigned int sourcePos = 0;
 	Value* tempValue = 0;
 	Callisto_Context* callisto = exec->callisto;
-	CHashTable<Value>* useNameSpace = 0;
+	CLinkHash<Value>* useNameSpace = 0;
 	int operand1;
 	int operand2;
-	
-	exec->state = Callisto_ThreadState::Running; // yes I am
 
+	exec->state = Callisto_ThreadState::Running; // yes I am
+	exec->warning = 0;
+	
 	UnitDefinition* unitDefinition = exec->frame->unitContainer.u;
-	CHashTable<Value>* localSpace = exec->frame->unitContainer.unitSpace;
-		
+	CLinkHash<Value>* localSpace = exec->frame->unitContainer.unitSpace;
+
 	for(;;)
 	{
-		if ( g_Callisto_warn != CE_NoError )
+		if ( exec->warning )
 		{
+			if ( exec->warning & 0x80 )
+			{
+				exec->warning = 0;
+				if ( exec->state == Callisto_ThreadState::Waiting )
+				{
+					popOne( exec );
+					exec->numberOfArgs = 0;
+//					goto DoYield;
+				}
+			}
+
 			if ( callisto->options.warningCallback )
 			{
 				if ( sourcePos )
@@ -188,20 +197,20 @@ int execute( Callisto_ExecutionContext *exec )
 						break;
 					}
 
-					callisto->options.warningCallback( g_Callisto_warn, formatSnippet.c_str(), line, col, exec->threadId );
+					callisto->options.warningCallback( exec->warning, formatSnippet.c_str(), line, col, exec->threadId );
 				}
 				else
 				{
-					callisto->options.warningCallback( g_Callisto_warn, 0, 0, 0, exec->threadId );
+					callisto->options.warningCallback( exec->warning, 0, 0, 0, exec->threadId );
 				}
 			}
 
 			if ( callisto->options.warningsFatal )
 			{
-				return g_Callisto_lastErr = g_Callisto_warn;
+				return g_Callisto_lastErr = exec->warning;
 			}
 
-			g_Callisto_warn = CE_NoError;
+			exec->warning = CE_NoError;
 		}
 		
 		D_EXECUTE(Log("[%s] stack[%d] >>", formatOpcode( (char)*T ).c_str(), exec->stackPointer));
@@ -219,31 +228,34 @@ int execute( Callisto_ExecutionContext *exec )
 				
 				int s = exec->stackPointer - (exec->numberOfArgs + 1);
 
-				for( ; s>=0; --s )
+				clearValue( exec->object );
+
+				for( ; s>=0; --s ) // iterator is not in a predictable location, walk backward until we find one
 				{
 					if ( (tempValue = (exec->stack + s))->type > 2 )
 					{
+						if ( tempValue->type == CTYPE_FRAME ) // can't search past the current frame
+						{
+							exec->warning = CE_IteratorNotFound;
+							break;
+						}
+
 						continue;
 					}
 
-					clearValue( exec->object );
 					valueMirror( &exec->object, tempValue );
 					
-					CHashTable<UnitDefinition>* table = callisto->typeFunctions.get( exec->object.type );
+					CLinkHash<UnitDefinition>* table = callisto->typeFunctions.get( exec->object.type );
 					if ( !table )
 					{
-						g_Callisto_warn = CE_FunctionTableNotFound;
-						popNum( exec, exec->numberOfArgs );
-						getNextStackEntry( exec );
+						exec->warning = CE_FunctionTableNotFound;
 						break;
 					}
 
 					if ( !(unitDefinition = table->get(key)) || !unitDefinition->function )
 					{
-						g_Callisto_warn = CE_FunctionTableEntryNotFound;
+						exec->warning = CE_FunctionTableEntryNotFound;
 						unitDefinition = exec->frame->unitContainer.u;
-						popNum( exec, exec->numberOfArgs );
-						getNextStackEntry( exec );
 						break;
 					}
 
@@ -252,9 +264,12 @@ int execute( Callisto_ExecutionContext *exec )
 
 				if ( s == 0 )
 				{
-					g_Callisto_warn = CE_IteratorNotFound;
+					exec->warning = CE_IteratorNotFound;
 				}
-				
+
+				popNum( exec, exec->numberOfArgs );
+				getNextStackEntry( exec );
+
 				continue;
 			}
 
@@ -300,7 +315,7 @@ globalUnitCheck:
 					}
 
 					unitDefinition = exec->frame->unitContainer.u;
-					g_Callisto_warn = CE_UnitNotFound;
+					exec->warning = CE_UnitNotFound;
 					popNum( exec, exec->numberOfArgs );
 					getNextStackEntry( exec );
 					continue;
@@ -353,7 +368,7 @@ callUnitCFunction:
 						}
 						else if ( !(tempValue = callisto->globalNameSpace->get(ret)) )
 						{
-							g_Callisto_warn = CE_HandleNotFound;
+							exec->warning |= CE_HandleNotFound; // in case the caller called 'wait'
 						}
 						else
 						{
@@ -367,14 +382,6 @@ callUnitCFunction:
 					// otherwise there is nothing to do, a null is already there
 
 					unitDefinition = exec->frame->unitContainer.u;
-
-					// were we yielded in the c call?
-					if ( exec->state == Callisto_ThreadState::Waiting )
-					{
-						popOne( exec ); // yield resume will be the return value
-						exec->numberOfArgs = 0;
-						goto DoYield;
-					}
 				}
 				else // code offset
 				{
@@ -384,8 +391,8 @@ doUnitCall:
 
 					tempValue = getNextStackEntry( exec ); // create a call-frame
 					tempValue->frame = Callisto_ExecutionContext::m_framePool.get();
+					tempValue->type32 = CTYPE_FRAME;
 					
-					tempValue->frame->onParent = 0;
 					tempValue->frame->unitContainer.u = unitDefinition;
 					tempValue->frame->unitContainer.type32 = CTYPE_UNIT;
 					localSpace = (tempValue->frame->unitContainer.unitSpace = useNameSpace);
@@ -402,8 +409,10 @@ doUnitCall:
 				continue;
 			}
 
+/*
 			case O_Yield:
 			{
+
 				exec->numberOfArgs = *T++;
 DoYield:
 				exec->Args = exec->stack + (exec->stackPointer - exec->numberOfArgs);
@@ -414,6 +423,7 @@ DoYield:
 
 				return CE_NoError;
 			}
+*/
 
 			case O_CallFromUnitSpace:
 			{
@@ -422,7 +432,7 @@ DoYield:
 				
 				if ( (unit = (unit->type == CTYPE_REFERENCE) ? unit->v : unit)->type != CTYPE_UNIT )
 				{
-					g_Callisto_warn = CE_TriedToCallNonUnit;
+					exec->warning = CE_TriedToCallNonUnit;
 					popNum( exec, exec->numberOfArgs );
 					getNextStackEntry( exec );
 					continue;
@@ -443,22 +453,24 @@ DoYield:
 
 			case O_Return:
 			{
-				if ( exec->frame->onParent ) // unit construction
+				if ( exec->frame->returnVector & 0xFF000000 ) // unit construction
 				{
 					popOne( exec ); // never care about the return value
 
-					if ( exec->frame->onParent < exec->frame->unitContainer.u->numberOfParents )
+					if ( (int)(exec->frame->returnVector >> 24) < exec->frame->unitContainer.u->numberOfParents )
 					{
 						goto nextParent;
 					}
 
 					// otherwise construction complete, place it on the stack
 					
-					T = exec->frame->returnVector + Tbase;
+					T = (exec->frame->returnVector & 0x00FFFFFF) + Tbase;
 
 					popNum( exec, exec->frame->numberOfArguments ); // pop args, leaving frame
 
-					valueMove( exec->stack + (exec->stackPointer - 1), &exec->frame->unitContainer );
+					tempValue = exec->stack + (exec->stackPointer - 1);
+					clearValueOnly( *tempValue );
+					valueMove( tempValue, &exec->frame->unitContainer );
 				}
 				else // normal return
 				{
@@ -470,8 +482,9 @@ DoYield:
 
 					// move the return value to the bottom of the stack
 					// and pop off everything else
-					valueMove( exec->stack + (exec->stackPointer - (2 + exec->frame->numberOfArguments)),
-							   exec->stack + (exec->stackPointer - 1) );
+					tempValue = exec->stack + (exec->stackPointer - (2 + exec->frame->numberOfArguments));
+					clearValueOnly( *tempValue );
+					valueMove( tempValue, exec->stack + (exec->stackPointer - 1) );
 
 					popNum( exec, 1 + exec->frame->numberOfArguments );
 
@@ -513,7 +526,7 @@ DoYield:
 				if ( (tempValue->type != CTYPE_UNIT) || (tempValue->u->function) )
 				{
 					popNum( exec, exec->numberOfArgs ); // clean up
-					g_Callisto_warn = CE_FirstThreadArgumentMustBeUnit;
+					exec->warning = CE_FirstThreadArgumentMustBeUnit;
 					getNextStackEntry( exec ); // null return
 					continue;
 				}
@@ -522,7 +535,6 @@ DoYield:
 				Callisto_ExecutionContext* newExec = getExecutionContext( callisto );
 
 				// set up it's call frame
-				newExec->frame->onParent = 0;
 				newExec->frame->unitContainer.u = tempValue->u;
 				newExec->frame->unitContainer.unitSpace = Value::m_unitSpacePool.get();
 				newExec->frame->unitContainer.type32 = CTYPE_UNIT;
@@ -558,7 +570,7 @@ DoYield:
 				if ( tempValue->type != CTYPE_STRING )
 				{
 					popNum( exec, exec->numberOfArgs );
-					g_Callisto_warn = CE_ImportMustBeString;
+					exec->warning = CE_ImportMustBeString;
 					continue;
 				}
 
@@ -566,9 +578,9 @@ DoYield:
 				// string to re-alloc, have to re-base the instruction pointer
 				unsigned int preserveOffset = (unsigned int)(T - Tbase);
 
-				g_Callisto_warn = loadEx( callisto, tempValue->string->c_str(), tempValue->string->size() );
+				int offset = loadEx( callisto, tempValue->string->c_str(), tempValue->string->size() );
 				
-				if ( g_Callisto_warn )
+				if ( offset )
 				{
 					bool debug = false;
 					if ( exec->numberOfArgs > 1 )
@@ -582,11 +594,11 @@ DoYield:
 
 					char* out = 0;
 					unsigned int size = 0;
-					if ( (g_Callisto_warn = Callisto_parse( tempValue->string->c_str(),
-															tempValue->string->size(),
-															&out,
-															&size,
-															debug)) )
+					if ( (offset = Callisto_parse( tempValue->string->c_str(),
+												   tempValue->string->size(),
+												   &out,
+												   &size,
+												   debug)) )
 					{
 						popNum( exec, exec->numberOfArgs );
 						continue;
@@ -594,7 +606,7 @@ DoYield:
 
 					popNum( exec, exec->numberOfArgs );
 
-					g_Callisto_warn = loadEx( callisto, out, size );
+					offset = loadEx( callisto, out, size );
 
 					delete[] out;
 				}
@@ -602,11 +614,10 @@ DoYield:
 				Tbase = callisto->text.c_str();
 				T = Tbase + preserveOffset;
 
-				if ( g_Callisto_warn > 0 )
+				if ( offset > 0 )
 				{
 					unitDefinition = callisto->rootUnit.u;
-					unitDefinition->textOffset = g_Callisto_warn;
-					g_Callisto_warn = 0;
+					unitDefinition->textOffset = offset;
 					Value::m_unitSpacePool.getReference( useNameSpace = callisto->globalNameSpace );
 
 					exec->numberOfArgs = 0;
@@ -615,7 +626,8 @@ DoYield:
 				}
 				else
 				{
-					g_Callisto_warn = CE_ImportLoadError;
+					getNextStackEntry( exec );
+					exec->warning = CE_ImportLoadError;
 				}
 				
 				continue;
@@ -929,10 +941,11 @@ LabelToStack:
 
 				tempValue = getNextStackEntry( exec ); // create a call-frame
 				tempValue->frame = Callisto_ExecutionContext::m_framePool.get();
+				tempValue->type32 = CTYPE_FRAME;
 
 				if ( !(tempValue->frame->unitContainer.u = callisto->unitDefinitions.get(key)) )
 				{
-					g_Callisto_warn = CE_UnitNotFound;
+					exec->warning = CE_UnitNotFound;
 					
 					Callisto_ExecutionContext::m_framePool.release( tempValue->frame );
 					popNum( exec, exec->numberOfArgs );
@@ -943,19 +956,23 @@ LabelToStack:
 				tempValue->frame->unitContainer.allocUnit();
 				localSpace = tempValue->frame->unitContainer.unitSpace;
 				
-				tempValue->frame->onParent = 0;
 				tempValue->frame->numberOfArguments = exec->numberOfArgs;
-				tempValue->frame->returnVector = (int)(T - Tbase);
+				tempValue->frame->returnVector = (int)(T - Tbase); // also sets "parent" to zero
 
 				tempValue->frame->next = exec->frame;
 				exec->frame = tempValue->frame;
 
 nextParent:
+				
 				// start executing parents in the chain
-				unitDefinition = callisto->unitDefinitions.get( exec->frame->unitContainer.u->parentList[exec->frame->onParent++] );
+
+				int onParent = exec->frame->returnVector >> 24;
+				unitDefinition = callisto->unitDefinitions.get( exec->frame->unitContainer.u->parentList[onParent++] );
+				exec->frame->returnVector = (exec->frame->returnVector & 0x00FFFFFF) | (onParent << 24);
+				
 				if ( !unitDefinition )
 				{
-					g_Callisto_warn = CE_ParentNotFound;
+					exec->warning = CE_ParentNotFound;
 
 					ExecutionFrame* F = exec->frame->next;
 					Callisto_ExecutionContext::m_framePool.release( exec->frame );
@@ -1061,7 +1078,7 @@ nextParent:
 					default: 
 					{
 						T += ntohl(*(unsigned int *)T);
-						g_Callisto_warn = CE_IteratorNotFound; break;
+						exec->warning = CE_IteratorNotFound; break;
 					}
 				}
 
@@ -1134,7 +1151,7 @@ nextParent:
 					default: 
 					{
 						// iterating an unknown type, guess.. branch out?
-						g_Callisto_warn = CE_IteratorNotFound;
+						exec->warning = CE_IteratorNotFound;
 						T += ntohl(*(unsigned int *)T);
 						break;
 					}
@@ -1144,9 +1161,13 @@ nextParent:
 			}
 
 			case O_ShiftOneDown:
-				valueMove( exec->stack + (exec->stackPointer - 2), exec->stack + (exec->stackPointer - 1) );
+			{
+				tempValue = exec->stack + (exec->stackPointer - 2);
+				clearValueOnly( *tempValue );
+				valueMove( tempValue, exec->stack + (exec->stackPointer - 1) );
 				popOne( exec );
 				continue;
+			}
 			
 			case O_PopTwo: popOne( exec ); // intentional fall-through
 			case O_PopOne: popOne( exec ); continue;
@@ -1255,7 +1276,7 @@ const Cstr& formatType( int type )
 		case CTYPE_STRING: return ret = "CTYPE_STRING";
 		case CTYPE_ARRAY: return ret = "CTYPE_ARRAY";
 		case CTYPE_REFERENCE: return ret = "CTYPE_REFERENCE";
-		default: return ret.format( "<UNRECOGNIZED TYPE %d>", type );
+		default: return ret.format( "<UNRECOGNIZED TYPE %d>", type ); // eek
 	}
 }
 
@@ -1293,7 +1314,7 @@ const Cstr& formatValue( Value const& value )
 			}
 		}
 
-		default: return ret = "<UNRECOGNIZED TYPE>";
+		default: return ret = "<UNRECOGNIZED TYPE>"; // eek
 	}
 }
 
@@ -1330,8 +1351,8 @@ Callisto_ExecutionContext* getExecutionContext( Callisto_Context* C, const long 
 		return C->threads.get( threadId );
 	}
 
-	long newId = 1;
-	while( C->threads.get( newId = InterlockedIncrement(&(C->threadIdGenerator)) ) );
+	char newId;
+	while( C->threads.get(newId = C->threadIdGenerator++) );
 	
 	Callisto_ExecutionContext *exec = C->threads.get( newId );
 
@@ -1347,7 +1368,6 @@ Callisto_ExecutionContext* getExecutionContext( Callisto_Context* C, const long 
 		exec->frame->unitContainer.type32 = CTYPE_UNIT;
 		exec->frame->unitContainer.u = C->rootUnit.u;
 		Value::m_unitSpacePool.getReference( exec->frame->unitContainer.unitSpace = C->globalNameSpace );
-		exec->frame->onParent = 0;
 		
 		exec->threadId = newId;
 		exec->callisto = C;
@@ -1384,7 +1404,7 @@ void doAssign( Callisto_ExecutionContext* E, const int operand1, const int opera
 	if ( to->type != CTYPE_REFERENCE )
 	{
 		D_ASSIGN(Log("Assigning to the stack is undefined"));
-		g_Callisto_warn = CE_AssignedValueToStack;
+		E->warning = CE_AssignedValueToStack;
 		return;
 	}
 
@@ -1392,7 +1412,7 @@ void doAssign( Callisto_ExecutionContext* E, const int operand1, const int opera
 
 	if ( to->flags & VFLAG_CONST )
 	{
-		g_Callisto_warn = CE_ValueIsConst;
+		E->warning = CE_ValueIsConst;
 		return;
 	}
 
@@ -1402,7 +1422,7 @@ void doAssign( Callisto_ExecutionContext* E, const int operand1, const int opera
 		
 		D_ASSIGN(Log("offstack to offstack type [%d]", from->type));
 
-		clearValue( *to );
+		clearValueOnly( *to );
 		valueMirror( to, from );
 	}
 	else
@@ -1411,7 +1431,7 @@ void doAssign( Callisto_ExecutionContext* E, const int operand1, const int opera
 
 		// can move the value off the stack, by definition it will not
 		// be used directly from there
-
+		clearValueOnly( *to );
 		valueMove( to, from );
 	}
 }
@@ -1419,9 +1439,13 @@ void doAssign( Callisto_ExecutionContext* E, const int operand1, const int opera
 //------------------------------------------------------------------------------
 void doAddAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
-	
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
+
 	if ( from->type == CTYPE_INT )
 	{
 		if ( to->type == CTYPE_INT )
@@ -1438,7 +1462,7 @@ void doAddAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 		{
 			D_OPERATOR(Log("doAddAssign fail<1>"));
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_FLOAT )
@@ -1457,11 +1481,13 @@ void doAddAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 		{
 			D_OPERATOR(Log("doAddAssign fail<2>"));
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_STRING )
 	{
+		to->flags &= ~VFLAG_HASH_COMPUTED;
+
 		if ( to->type == CTYPE_STRING )
 		{
 			*to->string += *from->string;
@@ -1471,22 +1497,25 @@ void doAddAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 		{
 			D_OPERATOR(Log("doAddAssign fail<3> [%d]", to->type));
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
 		D_OPERATOR(Log("doAddAssign fail<5>"));
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doSubtractAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT )
 	{
@@ -1503,7 +1532,7 @@ void doSubtractAssign( Callisto_ExecutionContext* E, const int operand1, const i
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_FLOAT )
@@ -1524,21 +1553,25 @@ void doSubtractAssign( Callisto_ExecutionContext* E, const int operand1, const i
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doModAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT && to->type == CTYPE_INT )
 	{
@@ -1548,15 +1581,19 @@ void doModAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doDivideAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+	
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT )
 	{
@@ -1573,7 +1610,7 @@ void doDivideAssign( Callisto_ExecutionContext* E, const int operand1, const int
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_FLOAT )
@@ -1591,21 +1628,25 @@ void doDivideAssign( Callisto_ExecutionContext* E, const int operand1, const int
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doMultiplyAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+	
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT )
 	{
@@ -1622,7 +1663,7 @@ void doMultiplyAssign( Callisto_ExecutionContext* E, const int operand1, const i
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_FLOAT )
@@ -1640,26 +1681,35 @@ void doMultiplyAssign( Callisto_ExecutionContext* E, const int operand1, const i
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doCompareEQ( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	int result;
 
-	if ( from->type == CTYPE_NULL )
+	if ( (from->type & BIT_COMPARE_DIRECT) && (to->type & BIT_COMPARE_DIRECT) )
 	{
-		result = to->type == CTYPE_NULL;
+		result = from->i64 == to->i64;
+	}
+	else if ( (from->type == CTYPE_NULL) || (to->type == CTYPE_NULL) )
+	{
+		result = from->type == to->type;
 	}
 	else if ( (from->type & BIT_CAN_HASH) && (to->type & BIT_CAN_HASH) )
 	{
@@ -1668,11 +1718,11 @@ void doCompareEQ( Callisto_ExecutionContext* E, const int operand1, const int op
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 		return;
 	}
 
-	clearValue( *destination );
+	clearValueOnly( *destination );
 	destination->type32 = CTYPE_INT;
 	destination->i64 = result;
 }
@@ -1680,7 +1730,12 @@ void doCompareEQ( Callisto_ExecutionContext* E, const int operand1, const int op
 //------------------------------------------------------------------------------
 void doCompareGT( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	int result;
 
@@ -1703,11 +1758,11 @@ void doCompareGT( Callisto_ExecutionContext* E, const int operand1, const int op
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 		return;
 	}
 
-	clearValue( *destination );
+	clearValueOnly( *destination );
 	destination->type32 = CTYPE_INT;
 	destination->i64 = result;
 }
@@ -1715,7 +1770,12 @@ void doCompareGT( Callisto_ExecutionContext* E, const int operand1, const int op
 //------------------------------------------------------------------------------
 void doCompareLT( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	int result;
 
@@ -1737,12 +1797,12 @@ void doCompareLT( Callisto_ExecutionContext* E, const int operand1, const int op
 	}
 	else
 	{
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 		clearValue( *destination );
 		return;
 	}
 
-	clearValue( *destination );
+	clearValueOnly( *destination );
 	destination->type32 = CTYPE_INT;
 	destination->i64 = result;
 }
@@ -1750,38 +1810,50 @@ void doCompareLT( Callisto_ExecutionContext* E, const int operand1, const int op
 //------------------------------------------------------------------------------
 void doLogicalAnd( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	int result = (from->i64 && to->i64) ? 1 : 0;
-	clearValue( *destination );
 
 	if ( (from->type & BIT_CAN_LOGIC) && (to->type & BIT_CAN_LOGIC) )
 	{
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		clearValue( *destination );
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doLogicalOr( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	int result = (from->i64 || to->i64) ? 1 : 0;
-	clearValue( *destination );
 	
 	if ( (from->type & BIT_CAN_LOGIC) && (to->type & BIT_CAN_LOGIC) )
 	{
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		clearValueOnly( *destination );
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
@@ -1819,28 +1891,32 @@ void doMemberAccess( Callisto_ExecutionContext* E, const unsigned int key )
 			}
 		}
 
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_REFERENCE;
 		destination->v = member ? member : source->unitSpace->add( key );
 	}
 	else // must be a type access
 	{
-		clearValue( E->object );
+		clearValueOnly( E->object );
 		valueMirror( &E->object, source );
 		
-		CHashTable<UnitDefinition>* table = E->callisto->typeFunctions.get( source->type );
+		CLinkHash<UnitDefinition>* table = E->callisto->typeFunctions.get( source->type );
 
-		clearValue( *destination );
+		clearValueOnly(*destination);
 
 		if ( !table )
 		{
-			g_Callisto_warn = CE_FunctionTableEntryNotFound;
+			destination->type32 = CTYPE_NULL;
+			destination->i64 = 0;
+			E->warning = CE_FunctionTableEntryNotFound;
 			return;
 		}
 
 		if ( !(destination->u = table->get(key)) )
 		{
-			g_Callisto_warn = CE_FunctionTableNotFound;
+			destination->type32 = CTYPE_NULL;
+			destination->i64 = 0;
+			E->warning = CE_FunctionTableNotFound;
 			return;
 		}
 
@@ -1863,7 +1939,7 @@ void doNegate( Callisto_ExecutionContext* E, const int operand )
 	if ( value->type == CTYPE_INT )
 	{
 		int64_t result = -value->i64;
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 		D_OPERATOR(Log("negate<1> [%lld]", destination->i64));
@@ -1871,7 +1947,7 @@ void doNegate( Callisto_ExecutionContext* E, const int operand )
 	else if ( value->type == CTYPE_FLOAT )
 	{
 		double result = -value->d;
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_FLOAT;
 		destination->d = result;
 		D_OPERATOR(Log("negate<2> [%g]", destination->d));
@@ -1879,7 +1955,7 @@ void doNegate( Callisto_ExecutionContext* E, const int operand )
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
@@ -1907,14 +1983,14 @@ void doCoerceToInt( Callisto_ExecutionContext* E, const int operand )
 			result = strtoull( *value->string, 0, 10 );
 		}
 
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
@@ -1942,14 +2018,14 @@ void doCoerceToFloat( Callisto_ExecutionContext* E, const int operand )
 			result = strtod( *value->string, 0 );
 		}
 
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_FLOAT;
 		destination->d = result;
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
@@ -1969,7 +2045,7 @@ void doCoerceToString( Callisto_ExecutionContext* E, const int operand )
 		Cstr* result = Value::m_stringPool.get();
 		result->format( "%lld", value->i64 );
 		
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_STRING;
 		destination->string = result;
 	}
@@ -1978,14 +2054,14 @@ void doCoerceToString( Callisto_ExecutionContext* E, const int operand )
 		Cstr* result = Value::m_stringPool.get();
 		result->format( "%g", value->d );
 		
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_STRING;
 		destination->string = result;
 	}
 	else if ( value->type != CTYPE_STRING )
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
@@ -1993,40 +2069,55 @@ void doCoerceToString( Callisto_ExecutionContext* E, const int operand )
 void doSwitch( Callisto_ExecutionContext* E, const char** T )
 {
 	Value* value = E->stack + (E->stackPointer - 1);
-	uint64_t hash = (value->type == CTYPE_REFERENCE) ? value->v->getHash() : value->getHash();
+	if ( value->type == CTYPE_REFERENCE )
+	{
+		value = value->v;
+	}
 
-	const char* jumpTable = *T + ntohl(*(int *)*T);
-	*T += 4; // offset to table
-	*T += ntohl(*(int *)*T); // jump to entry
+	const char* jumpTable = *T + ntohl(*(int *)*T); // offset to table
 	
 	unsigned int cases = ntohl(*(unsigned int *)jumpTable);
 	jumpTable += 4;
 	
-	char defaultExists = *jumpTable++;
+	char switchFlags = *jumpTable++;
+	uint64_t hash;
 
-	unsigned char c = 0;
-	for( ; c<cases; c++ )
+	if ( switchFlags & SWITCH_HAS_NULL )
 	{
-		if ( hash == ntohl(*(unsigned int *)jumpTable) )
+		if ( value->type == CTYPE_NULL )
 		{
-			jumpTable += 4;
-			int vector = ntohl(*(int *)jumpTable);
-			*T = jumpTable + vector;
-			break;
+			popOne( E );
+			goto doSwitchJump;
 		}
 
-		jumpTable += 8;
+		jumpTable += 4;
 	}
 
-	if ( (c >= cases) && defaultExists )
+	hash = htobe64( value->getHash() );
+	popOne( E );
+
+	for( unsigned int c = 0; c<cases; ++c, jumpTable += 12 )
 	{
-		// default is always packed last, just back up and jump to it
-		jumpTable -= 4;
+		if ( hash == *(uint64_t *)jumpTable )
+		{
+			jumpTable += 8;
+			int vector = ntohl(*(int *)jumpTable);
+			*T = jumpTable + vector;
+			return;
+		}
+	}
+
+	if ( switchFlags & SWITCH_HAS_DEFAULT )
+	{
+doSwitchJump:
 		int vector = ntohl(*(int *)jumpTable);
 		*T = jumpTable + vector;
 	}
-
-	popOne( E );
+	else
+	{
+		*T += 4;
+		*T += ntohl(*(int *)*T);
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -2045,7 +2136,7 @@ void doPushIterator( Callisto_ExecutionContext* E )
 		{
 			Cstr* string;
 			Value::m_stringPool.getReference( string = value->string );
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING_ITERATOR;
 			destination->iterator = Value::m_iteratorPool.get();
 			destination->iterator->index = 0;
@@ -2057,7 +2148,7 @@ void doPushIterator( Callisto_ExecutionContext* E )
 		{
 			CLinkHash<CKeyValue>* tableSpace;
 			Value::m_tableSpacePool.getReference( tableSpace = value->tableSpace );
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_TABLE_ITERATOR;
 			destination->iterator = Value::m_iteratorPool.get();
 			destination->iterator->iterator.iterate( *(destination->tableSpace = tableSpace) );
@@ -2068,7 +2159,7 @@ void doPushIterator( Callisto_ExecutionContext* E )
 		{
 			Carray<Value>* array;
 			Value::m_arrayPool.getReference( array = value->array );
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_ARRAY_ITERATOR;
 			destination->iterator = Value::m_iteratorPool.get();
 			destination->iterator->index = 0;
@@ -2079,7 +2170,7 @@ void doPushIterator( Callisto_ExecutionContext* E )
 		default:
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 }
@@ -2087,21 +2178,26 @@ void doPushIterator( Callisto_ExecutionContext* E )
 //------------------------------------------------------------------------------
 void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT )
 	{
 		if ( to->type == CTYPE_INT )
 		{
 			int64_t result = to->i64 + from->i64;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = result;
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			double result = to->d + from->i64;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 		}
@@ -2109,14 +2205,14 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 		{
 			Cstr* result = Value::m_stringPool.get();
 			result->format( "%s%lld", to->string->c_str(), from->i64 );
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING;
 			destination->string = result;
 		}
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_FLOAT )
@@ -2124,14 +2220,14 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 		if ( to->type == CTYPE_INT )
 		{
 			double result = to->i64 + from->d;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = (int64_t)result;
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			double result = to->d + from->d;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 		}
@@ -2139,14 +2235,14 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 		{
 			Cstr* result = Value::m_stringPool.get();
 			result->format( "%s%g", to->string->c_str(), from->d );
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING;
 			destination->string = result;
 		}
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_STRING )
@@ -2156,7 +2252,7 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 			Cstr* result = Value::m_stringPool.get();
 			*result = *to->string + *from->string;
 
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING;
 			destination->string = result;
 		}
@@ -2165,7 +2261,7 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 			Cstr* result = Value::m_stringPool.get();
 			result->format( "%lld%s", to->i64, from->string->c_str() );
 
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING;
 			destination->string = result;
 		}
@@ -2174,48 +2270,53 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 			Cstr* result = Value::m_stringPool.get();
 			result->format( "%g%s", to->d, from->string->c_str() );
 
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING;
 			destination->string = result;
 		}
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinarySubtraction( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT )
 	{
 		if ( to->type == CTYPE_INT )
 		{
 			int64_t result = to->i64 - from->i64;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = result;
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			double result = to->d - from->i64;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 		}
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_FLOAT )
@@ -2223,41 +2324,46 @@ void doBinarySubtraction( Callisto_ExecutionContext* E, const int operand1, cons
 		if ( to->type == CTYPE_INT )
 		{
 			double result = to->i64 - from->d;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			double result = to->d - from->d;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 		}
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 	
 	if ( from->type == CTYPE_INT )
 	{
 		if ( to->type == CTYPE_INT )
 		{
 			int64_t result = to->i64 * from->i64;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = result;
 			D_OPERATOR(Log("doBinaryMultiplication<1> [%lld]", result));
@@ -2265,7 +2371,7 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			double result = to->d * from->i64;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 			D_OPERATOR(Log("doBinaryMultiplication<2> [%g]", result));
@@ -2273,7 +2379,7 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_FLOAT )
@@ -2281,7 +2387,7 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 		if ( to->type == CTYPE_INT )
 		{
 			double result = to->i64 * from->d;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 			D_OPERATOR(Log("doBinaryMultiplication<3> [%g]", result));
@@ -2289,7 +2395,7 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			double result = to->d * from->d;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 			D_OPERATOR(Log("doBinaryMultiplication<4> [%g]", result));
@@ -2297,41 +2403,46 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinaryDivision( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT )
 	{
 		if ( to->type == CTYPE_INT )
 		{
 			int64_t result = to->i64 / from->i64;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = result;
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			double result = to->d / from->i64;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 		}
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else if ( from->type == CTYPE_FLOAT )
@@ -2339,149 +2450,182 @@ void doBinaryDivision( Callisto_ExecutionContext* E, const int operand1, const i
 		if ( to->type == CTYPE_INT )
 		{
 			double result = to->i64 / from->d;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = (int64_t)result;
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			double result = to->d / from->d;
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
 		}
 		else
 		{
 			clearValue( *destination );
-			g_Callisto_warn = CE_IncompatibleDataTypes;
+			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinaryMod( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT && to->type == CTYPE_INT )
 	{
 		int64_t result = to->i64 % from->i64;
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinaryBitwiseRightShift( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT && to->type == CTYPE_INT )
 	{
 		int64_t result = to->i64 >> from->i64;
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinaryBitwiseLeftShift( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( from->type == CTYPE_INT && to->type == CTYPE_INT )
 	{
 		int64_t result = to->i64 << from->i64;
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinaryBitwiseOR( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 	
 	if ( (from->type == CTYPE_INT) && (to->type == CTYPE_INT) )
 	{
 		int64_t result = to->i64 | from->i64;
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinaryBitwiseAND( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( (from->type == CTYPE_INT) && (to->type == CTYPE_INT) )
 	{
 		int64_t result = to->i64 & from->i64;
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doBinaryBitwiseXOR( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( (from->type == CTYPE_INT) && (to->type == CTYPE_INT) )
 	{
 		int64_t result = to->i64 ^ from->i64;
-		clearValue( *destination );
+		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
 	}
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doORAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( (from->type == CTYPE_INT) && (to->type == CTYPE_INT) )
 	{
@@ -2490,15 +2634,18 @@ void doORAssign( Callisto_ExecutionContext* E, const int operand1, const int ope
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doXORAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( (from->type == CTYPE_INT) && (to->type == CTYPE_INT) )
 	{
@@ -2507,15 +2654,18 @@ void doXORAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doANDAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( (from->type == CTYPE_INT) && (to->type == CTYPE_INT) )
 	{
@@ -2524,15 +2674,18 @@ void doANDAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doRightShiftAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( (from->type == CTYPE_INT) && (to->type == CTYPE_INT) )
 	{
@@ -2541,15 +2694,18 @@ void doRightShiftAssign( Callisto_ExecutionContext* E, const int operand1, const
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
 //------------------------------------------------------------------------------
 void doLeftShiftAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 )
 {
-	BINARY_ARG_SETUP;
-	destination = destination;
+	Value* from = E->stack + (E->stackPointer - operand1);
+	Value* to = E->stack + (E->stackPointer - operand2);
+	Value* destination = to;
+	from = (from->type == CTYPE_REFERENCE) ? from->v : from;
+	to = (to->type == CTYPE_REFERENCE) ? to->v : to;
 
 	if ( (from->type == CTYPE_INT) && (to->type == CTYPE_INT) )
 	{
@@ -2558,7 +2714,7 @@ void doLeftShiftAssign( Callisto_ExecutionContext* E, const int operand1, const 
 	else
 	{
 		clearValue( *destination );
-		g_Callisto_warn = CE_IncompatibleDataTypes;
+		E->warning = CE_IncompatibleDataTypes;
 	}
 }
 
@@ -2570,12 +2726,12 @@ void addArrayElement( Callisto_ExecutionContext* E, unsigned int index )
 
 	if ( to->type != CTYPE_ARRAY )
 	{
-		clearValue( *to );
+		clearValueOnly( *to );
 		to->allocArray();
 	}
 
 	Value& toAdd = ((*to->array)[index]);
-	clearValue( toAdd );
+	clearValueOnly( toAdd );
 	valueMirror( &toAdd, from );
 
 	popOne( E );
@@ -2594,18 +2750,18 @@ void addTableElement( Callisto_ExecutionContext* E )
 	
 	if ( !(key->type & BIT_CAN_HASH) )
 	{
-		g_Callisto_warn = CE_UnhashableDataType;
+		E->warning = CE_UnhashableDataType;
 		clearValue( *value ); // null it out
 	}
 	else
 	{
 		if ( table->type != CTYPE_TABLE )
 		{
-			clearValue( *table );
+			clearValueOnly( *table );
 			table->allocTable();
 		}
 
-		int hash = key->getHash();
+		unsigned int hash = (unsigned int)key->getHash();
 		CKeyValue* KV = table->tableSpace->get( hash );
 		if ( !KV )
 		{
@@ -2613,8 +2769,8 @@ void addTableElement( Callisto_ExecutionContext* E )
 		}
 		else
 		{
-			clearValue( KV->value );
-			clearValue( KV->key );
+			clearValueOnly( KV->value );
+			clearValueOnly( KV->key );
 		}
 
 		valueMirror( &KV->value, value );
@@ -2652,7 +2808,7 @@ void dereferenceFromTable( Callisto_ExecutionContext* E )
 	{
 		if ( key->type == CTYPE_INT )
 		{
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_REFERENCE;
 			destination->v = &((*table->array)[(unsigned int)key->i64]);
 		}
@@ -2665,7 +2821,7 @@ void dereferenceFromTable( Callisto_ExecutionContext* E )
 	{
 		if ( key->type == CTYPE_INT )
 		{
-			clearValue( *destination );
+			clearValueOnly( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = *table->string->c_str( (unsigned int)key->i64 );
 		}
@@ -2676,7 +2832,7 @@ void dereferenceFromTable( Callisto_ExecutionContext* E )
 	}
 	else if ( key->type & BIT_CAN_HASH )
 	{
-		CKeyValue *KV = table->tableSpace->get( key->getHash() );
+		CKeyValue *KV = table->tableSpace->get( (unsigned int)key->getHash() );
 		clearValue( *destination );
 		if ( KV )
 		{
@@ -2750,7 +2906,7 @@ void dumpStack( Callisto_ExecutionContext* E )
 //------------------------------------------------------------------------------
 void dumpSymbols( Callisto_Context* C )
 {
-	CHashTable<Value>::Iterator iter( *C->globalNameSpace );
+	CLinkHash<Value>::Iterator iter( *C->globalNameSpace );
 	for( Value* V = iter.getFirst(); V; V = iter.getNext() )
 	{
 		if ( V->type == CTYPE_REFERENCE )

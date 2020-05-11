@@ -41,24 +41,18 @@ struct CToken
 	Cstr string;
 	union // for bswap packing
 	{
+		uint64_t hash;
 		int64_t i64; 
 		double d;
 	};
 
-	unsigned int getHash()
+	uint64_t getValueHash()
 	{
-		if ( type == CTYPE_STRING )
-		{
-			return hash( string.c_str(), string.size() );
-		}
-
-		unsigned int u = (unsigned int)(i64 >> 32);
-		if ( (u > 0) && (u < 0xFFFFFFFF) )
-		{
-			return u ^ (unsigned int)i64;
-		}
-
-		return (unsigned int)i64;
+		Value V;
+		V.type32 = type;
+		V.string = &string;
+		V.i64 = i64;
+		return V.getHash();
 	}
 
 	CToken()
@@ -66,7 +60,6 @@ struct CToken
 		type = CTYPE_NULL;
 		i64 = 0;
 	}
-	
 };
 
 //------------------------------------------------------------------------------
@@ -76,6 +69,9 @@ struct SwitchCase
 	int jumpIndex; // where to go to get to this case
 	Cstr enumName;
 	bool defaultCase;
+	bool nullCase;
+
+	SwitchCase() { defaultCase = false; nullCase = false; }
 };
 
 //------------------------------------------------------------------------------
@@ -84,7 +80,7 @@ struct SwitchContext
 	CLinkList<SwitchCase> caseLocations;
 	int breakTarget;
 	int tableLocationId;
-	bool hasDefault;
+	char switchFlags;
 };
 
 //------------------------------------------------------------------------------

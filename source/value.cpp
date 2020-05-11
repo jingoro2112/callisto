@@ -5,18 +5,18 @@ JsonValue JsonValue::m_deadValue;
 template<> CObjectTPool<CLinkHash<JsonValue>::Node> CLinkHash<JsonValue>::m_linkNodes( 0, 0 );
 
 //------------------------------------------------------------------------------
-inline void clearV( CHashTable<Value>::Node& N )
+inline void clearV( CLinkHash<Value>::Node& N )
 {
 	clearValue( N.item );
 }
-template<> CObjectTPool<CHashTable<Value>::Node> CHashTable<Value>::m_hashNodes( 16, clearV );
+template<> CObjectTPool<CLinkHash<Value>::Node> CLinkHash<Value>::m_linkNodes( 16, clearV );
 
 //------------------------------------------------------------------------------
-inline void clearUnitSpace( CHashTable<Value>& space )
+inline void clearUnitSpace( CLinkHash<Value>& space )
 {
 	space.clear();
 }
-CObjectTPool<CHashTable<Value>> Value::m_unitSpacePool( 4, clearUnitSpace );
+CObjectTPool<CLinkHash<Value>> Value::m_unitSpacePool( 4, clearUnitSpace );
 
 //------------------------------------------------------------------------------
 static void clearArrayPool( Carray<Value>& array )
@@ -110,7 +110,7 @@ void deepCopyEx( Value* target, Value* source )
 		{
 			target->allocUnit();
 
-			CHashTable<Value>::Iterator iter( *source->unitSpace );
+			CLinkHash<Value>::Iterator iter( *source->unitSpace );
 			for( Value* V = iter.getFirst(); V; V = iter.getNext() )
 			{
 				Value* N = target->unitSpace->add( iter.getCurrentKey() );

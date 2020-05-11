@@ -1,4 +1,7 @@
 /*~
+loop
+loop
+loop
 count: 3
 count2: 3
 1: 0
@@ -42,6 +45,28 @@ sub: 2 111
 3:ARRAY[3]
 1:1
 ~*/
+
+unit r1()
+{
+	.reset();
+}
+
+unit r2()
+{
+	r1();
+}
+
+unit r3()
+{
+	r2();
+}
+
+a1 = [0, 1, 2];
+foreach( a : a1 )
+{
+	r3();
+	log("loop");
+}
 
 a1 = [0, 1, 2];
 log( "count: ", a1.count() );

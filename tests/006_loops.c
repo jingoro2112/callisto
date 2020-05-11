@@ -68,7 +68,6 @@ while( a < 20)
 }
 
 
-
 for( tristan = 1; tristan <= 7; tristan++ )
 {
 	log( "test.log", "tristan is: ", tristan );
@@ -119,16 +118,41 @@ for( i=1, j=2, k=3; i<10; ++i, ++j, k = j + i )
 
 for( i=0; i<10; ++i )
 	log(i);
-	log(i);
+log(i);
+	
+do
+{
+	log( i );
+	++i;
+} while ( i < 13 );
 
-	do
-	{
-		log( i );
-		++i;
-	} while ( i < 13 );
+do
+	--i;
+while( i >10 );
 
-	do
-		--i;
-	while( i >10 );
+log(i);
 
-	log(i);
+/*
+unit check1()
+{
+	.reset();
+}
+unit check2()
+{
+	check1();
+}
+unit check3()
+{
+	check2();
+}
+unit check4()
+{
+	check3();
+}
+
+a = [1,2,3,4,5];
+foreach( value : a )
+{
+	check4();
+}
+*/

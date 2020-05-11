@@ -24,7 +24,11 @@ ONE
 NULL
 some stringstring 1 and thisand some more?thisworks?
 string 1 and thisand some more?
+n2
+n4
 ~*/
+
+a = null;
 
 n = -(-(-(-(-(-10)))));
 log(n);
@@ -57,3 +61,28 @@ s2 = "some string" + s1 + "thisworks?";
 log( s2 );
 s2 += " and another";
 log( s1 );
+
+if ( null == 0 )
+{
+	log( "n1" );
+}
+
+if ( null == null )
+{
+	log( "n2" );
+}
+
+if ( 0 == null )
+{
+	log( "n3" );
+}
+
+if ( 0 == 0 )
+{
+	log( "n4" );
+}
+
+if ( null > null )
+{
+	log( "n5" );
+}

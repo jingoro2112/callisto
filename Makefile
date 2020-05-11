@@ -1,7 +1,7 @@
 
-#FLAGS = -O3
+FLAGS = -O3
 #FLAGS = -O3 -pg
-FLAGS = -O0 -ggdb
+#FLAGS = -O0 -ggdb
 
 all: callisto
 

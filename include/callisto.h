@@ -39,7 +39,7 @@ void Callisto_destroyContext( Callisto_Context* C );
 enum Callisto_Error
 {
 	CE_NoError = 0,
-	CE_FileErr = -999,
+	CE_FileErr = -127,
 	CE_ImportMustBeString,
 	CE_ImportLoadError,
 	
@@ -87,8 +87,8 @@ const char* Callisto_formatError( const int err );
 
 enum Callisto_ThreadState
 {
+	Running =0, // is running right now
 	Runnable, // will run the next time the scheduler gets to it
-	Running, // is running right now
 	Waiting, // waiting for an event
 	Reap, // completed, jsut waiting to be cleaned up by the scheduler
 };

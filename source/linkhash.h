@@ -18,7 +18,8 @@ public:
 	H addItem( H item, const unsigned int key, bool addToTail =false );
 	inline bool remove( const unsigned int key );
 	inline void removeCurrent() { if ( m_current ) remove( m_current->key ); }
-	inline void clear( bool resetBucketCount =false );
+	inline void clear();
+
 	unsigned int count() const { return m_count; }
 	inline void resize( unsigned int newBucketCount );
 	H* getFirst() { m_current = m_head; return m_current ? &(m_current->item) : 0; }
@@ -321,39 +322,18 @@ template<class H> void CLinkHash<H>::resize( unsigned int newBucketCount )
 }
 
 //-----------------------------------------------------------------------------
-template<class H> void CLinkHash<H>::clear( bool resetBucketCount )
+template<class H> void CLinkHash<H>::clear()
 {
-	if ( !m_list )
+	memset( m_list, 0, m_mod*sizeof(Node*) );
+	while( m_head )
 	{
-		return;
+		Node* N = m_head->nextIter;
+		m_linkNodes.release( m_head );
+		m_head = N;
 	}
-	
-	for( unsigned int l=0; l<m_mod ; l++ )
-	{
-		while( m_list[l] )
-		{
-			Node *N = m_list[l]->next;
-
-			if ( m_clear )
-			{
-				m_clear( m_list[l]->item );
-			}
-			m_linkNodes.release( m_list[l] );
-			m_list[l] = N;
-		}
-	}
-
-	m_head = 0;
+				
 	m_current = 0;
 	m_count = 0;
-
-	if ( resetBucketCount )
-	{
-		m_mod = 4;
-		delete[] m_list;
-		m_list = new Node*[ m_mod ];
-		memset( m_list, 0, m_mod * sizeof(Node*) );
-	}
 }
 
 //-----------------------------------------------------------------------------

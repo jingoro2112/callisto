@@ -2,7 +2,6 @@
 #include "asciidump.h"
 #include "arch.h"
 #include "utf8.h"
-
 #include <ctype.h>
 
 #define D_DUMP_BYTECODE(a) //a
@@ -32,7 +31,6 @@ template<> CObjectTPool<CLinkHash<LinkEntry>::Node> CLinkHash<LinkEntry>::m_link
 template<> CObjectTPool<CLinkHash<bool>::Node> CLinkHash<bool>::m_linkNodes(0);
 template<> CObjectTPool<CLinkHash<unsigned int>::Node> CLinkHash<unsigned int>::m_linkNodes(0);
 template<> CObjectTPool<CLinkHash<int>::Node> CLinkHash<int>::m_linkNodes(0);
-template<> CObjectTPool<CLinkHash<Cstr>::Node> CLinkHash<Cstr>::m_linkNodes(0);
 
 //------------------------------------------------------------------------------
 void CCloggingCallback( const char* msg )
@@ -236,6 +234,7 @@ void putStringToCodeStream( Cstr& code, Cstr& string )
 	unsigned int len = string.size();
 	unsigned int hlen = htonl(len);
 	code.append( (char*)&hlen, 4 );
+	
 	if ( len )
 	{
 		code.append( string.c_str(), len );
@@ -243,22 +242,13 @@ void putStringToCodeStream( Cstr& code, Cstr& string )
 }
 
 //------------------------------------------------------------------------------
-unsigned int hash( Cstr& name, Compilation& target, bool alias =true )
+unsigned int hash( Cstr& name, Compilation& target )
 {
-	unsigned int key = hashStr( name );
-/*
-	if ( alias )
+	unsigned int key = hash32( name, name.size() );
+
+	if ( !target.symbolTable.get(key) )
 	{
-		if ( !hashMap.get(key) )
-		{
-			*hashMap.add(key) = ++flatHash;
-		}
-		key = *hashMap.get(key);
-	}
-*/	
-	if ( !target.symbolTable.get( key ) )
-	{
-		*target.symbolTable.add( key ) = name;
+		*target.symbolTable.add(key) = name;
 	}
 	
 	return key;
@@ -508,7 +498,7 @@ int Callisto_parse( const char* data, const int size, char** out, unsigned int* 
 		output.append( Cstr(comp.source) );
 	}
 
-	header.CRC = htonl( hash( &header, sizeof(CodeHeader) - 4 ) );
+	header.CRC = htonl( hash32(&header, sizeof(CodeHeader) - 4) );
 
 	memcpy( output.p_str(), &header, sizeof(CodeHeader) );
 
@@ -1617,7 +1607,7 @@ objectDeref:
 
 			addOpcode( context, O_MemberAccess );
 
-			unsigned int key = htonl(hash( nextToken, comp ));
+			unsigned int key = htonl(hash(nextToken, comp));
 			context.bytecode.append( (char *)&key, 4 );
 			context.history.clear();
 	
@@ -1625,7 +1615,7 @@ objectDeref:
 			
 			if ( !getToken(comp, nextToken, nextvalue) )
 			{
-				comp.err = "unexpected EOF";
+				comp.err = "unexpected EO-F";
 				return false;
 			}
 			
@@ -2625,7 +2615,7 @@ bool parseSwitch( Compilation& comp, UnitEntry& unit, ExpressionContext& context
 	sc->tableLocationId = Compilation::jumpIndex++;
 	addJumpLocation( unit, sc->tableLocationId );
 
-	sc->hasDefault = false;
+	sc->switchFlags = 0;
 
 	LoopingStructure* loop = unit.loopTracking.addHead();
 	loop->continueTarget = 0;
@@ -3101,68 +3091,82 @@ bool processSwitchContexts( Compilation& comp, UnitEntry& unit )
 		addJumpTarget( unit, sc->tableLocationId );
 
 		unsigned int count = sc->caseLocations.count();
+
+		if ( sc->switchFlags & SWITCH_HAS_DEFAULT )
+		{
+			--count;
+		}
+		if ( sc->switchFlags & SWITCH_HAS_NULL )
+		{
+			--count;
+		}
 		
 		D_SWITCH(Log("Switch Context break[%d] tableLocation[%d] entries[%d]", sc->breakTarget, sc->tableLocationId, count));
-		count = htonl(count);
+
+		count = htonl( count );
+		
 		unit.bytecode.append( (char *)&count, 4 );
-		unit.bytecode += sc->hasDefault ? (char)1 : (char)0;
+
+		unit.bytecode += sc->switchFlags;
+		
 		unit.history.clear();
 
-		SwitchCase *defaultCase = 0;
-		unsigned int hash = 0;
-		uint64_t highestSwitchDirect = 0;
-		uint64_t lowestSwitchDirect = 0xFFFFFFFFFFFFFFFFULL;
+		uint64_t hash = 0;
 
-		CLinkList<SwitchCase>::Iterator iter1(sc->caseLocations);
-		CLinkList<SwitchCase>::Iterator iter2(sc->caseLocations);
+		CLinkList<SwitchCase>::Iterator iter1( sc->caseLocations );
+		CLinkList<SwitchCase>::Iterator iter2( sc->caseLocations );
+
+		for( SwitchCase *C = iter1.getFirst(); C; C = iter1.getNext() )
+		{
+			if ( C->nullCase )
+			{
+				addJumpLocation( unit, C->jumpIndex );
+				unit.history.clear();
+				break;
+			}
+		}
 		
 		for( SwitchCase *C = iter1.getFirst(); C; C = iter1.getNext() )
 		{
-			hash = C->val.getHash();
-
-			if ( hash > highestSwitchDirect )
+			if ( C->nullCase || C->defaultCase )
 			{
-				highestSwitchDirect = hash;
-			}
-			if ( hash < lowestSwitchDirect )
-			{
-				lowestSwitchDirect = hash;
+				continue;
 			}
 
+			hash = C->val.getValueHash();
+
+			// falsely triggers for ENUM cases... hmmm
+/*
 			for( SwitchCase *C2 = iter2.getFirst(); C2; C2 = iter2.getNext() )
 			{
 				if ( (C != C2)
-					 && (hash == C2->val.getHash())
+					 && (hash == C2->val.getValueHash())
 					 && !C->defaultCase
 					 && !C2->defaultCase )
 				{
-//					comp.err.format( "<internal error> switch case hash duplication [%s] and [%s]", formatCToken(C->val).c_str(), formatCToken(C2->val).c_str() );
-//					return false;
+					comp.err.format( "<internal error> switch case hash duplication [%s] and [%s]", formatToken(C->val).c_str(), formatToken(C2->val).c_str() );
+					return false;
 				}
 			}
+*/
+			
+			hash = htobe64( hash );
 
-			hash = htonl( hash );
+			unit.bytecode.append( (char *)&hash, 8 );
+			addJumpLocation( unit, C->jumpIndex );
+			unit.history.clear();
 
-			if ( C->defaultCase )
-			{
-				defaultCase = C;
-			}
-			else
-			{
-				unit.bytecode.append( (char *)&hash, 4 );
-				addJumpLocation( unit, C->jumpIndex );
-				unit.history.clear();
-
-				D_SWITCH(Log("val[%s] jumpIndex[%d] enum[%s] default[%s]", formatCToken(C->val).c_str(), C->jumpIndex, C->enumName.c_str(), C->defaultCase ? "T":"F"));
-			}
+			D_SWITCH(Log("val[%s] jumpIndex[%d] enum[%s] default[%s]", formatCToken(C->val).c_str(), C->jumpIndex, C->enumName.c_str(), C->defaultCase ? "T":"F"));
 		}
 
-		if ( defaultCase )
+		for( SwitchCase *C = iter1.getFirst(); C; C = iter1.getNext() )
 		{
-			hash = htonl(defaultCase->val.getHash());
-			unit.bytecode.append( (char *)&hash, 4 );
-			addJumpLocation( unit, defaultCase->jumpIndex );
-			unit.history.clear();
+			if ( C->defaultCase )
+			{
+				addJumpLocation( unit, C->jumpIndex );
+				unit.history.clear();
+				break;
+			}
 		}
 	}
 
@@ -3185,7 +3189,13 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 			return false;
 		}
 
-		sc->hasDefault = true;
+		if ( sc->switchFlags &= SWITCH_HAS_DEFAULT )
+		{
+			comp.err = "multiple 'default' cases";
+			return false;
+		}
+		
+		sc->switchFlags |= SWITCH_HAS_DEFAULT;
 
 		C = sc->caseLocations.add();
 		C->jumpIndex = Compilation::jumpIndex++;
@@ -3212,6 +3222,7 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 		C = sc->caseLocations.add();
 		C->jumpIndex = Compilation::jumpIndex++;
 		C->defaultCase = false;
+		C->nullCase = false;
 
 		if ( !getToken(comp, token, C->val) )
 		{
@@ -3221,7 +3232,7 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 
 		emitDebug( context, comp.pos );
 
-		if ( (token != "null") && (C->val.type == CTYPE_NULL) )
+		if ( (token != "NULL") && (token != "null") && (C->val.type == CTYPE_NULL) )
 		{
 			if ( !isValidLabel(token) )
 			{
@@ -3274,6 +3285,18 @@ bool parseSwitchBodyTerm( Compilation& comp, UnitEntry& unit, ExpressionContext&
 		}
 		else
 		{
+			if ( (token == "null") || (token == "NULL") )
+			{
+				if ( sc->switchFlags &= SWITCH_HAS_NULL )
+				{
+					comp.err = "multiple 'null' cases";
+					return false;
+				}
+
+				C->nullCase = true;
+				sc->switchFlags |= SWITCH_HAS_NULL;
+			}
+
 			D_SWITCH(Log("case built [%s]", formatCToken(C->val).c_str()));
 
 			if ( !getToken(comp, token, value) )
@@ -3890,7 +3913,7 @@ int Callisto_run( Callisto_Context* C, const char* inData, const unsigned int in
 	unsigned int realLen = (unsigned int)(inLen ? inLen : strlen(inData));
 
 	const CodeHeader *header = (CodeHeader *)inData;
-	if ( (realLen < sizeof(CodeHeader)) || (ntohl(header->CRC) != hash(header, sizeof(CodeHeader) - 4)) )
+	if ( (realLen < sizeof(CodeHeader)) || (ntohl(header->CRC) != hash32(header, sizeof(CodeHeader) - 4)) )
 	{
 		char* data = 0;
 		unsigned int len = 0;
