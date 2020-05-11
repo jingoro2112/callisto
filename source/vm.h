@@ -10,7 +10,6 @@
 #include "object_tpool.h"
 #include "linkhash.h"
 #include "linklist.h"
-#include "hashtable.h"
 #include "hash.h"
 #include "str.h"
 #include "log.h"
@@ -86,6 +85,7 @@ struct ExecutionFrame
 	ExecutionFrame() { unitContainer.type32 = CTYPE_NULL; unitContainer.i64 = 0; }
 };
 
+			
 //------------------------------------------------------------------------------
 void Callisto_ExecutionContext::clear()
 {
@@ -102,14 +102,6 @@ struct TextSection
 	unsigned int sourceOffset;
 	unsigned int textOffsetTop;
 };
-
-// Callisto_Context holds global info, it has a "root unit" that has no parents and represents global namespace
-// - pools all values and units keyvalues pool themselves
-
-// Callisto_ExecutionContext is a thread executing inside Callisto_Context
-// a Frame is an execution frame for calling a unit, it points to the current unit instantation
-// a unitDefinition is a unit definition
-// A Unit represents an instantiation of a unitDefinition, it has its own namespace
 
 //------------------------------------------------------------------------------
 struct Callisto_Context

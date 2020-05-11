@@ -328,6 +328,10 @@ template<class H> void CLinkHash<H>::clear()
 	while( m_head )
 	{
 		Node* N = m_head->nextIter;
+		if ( m_clear )
+		{
+			m_clear( N->item );
+		}
 		m_linkNodes.release( m_head );
 		m_head = N;
 	}

@@ -6,7 +6,6 @@
 
 #include "hash.h"
 #include "linkhash.h"
-#include "hashtable.h"
 #include "object_tpool.h"
 #include "array.h"
 #include "str.h"
