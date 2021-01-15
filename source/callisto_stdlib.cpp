@@ -1,4 +1,4 @@
-#include "../include/callisto.h"
+#include "callisto.h"
 #include "vm.h"
 
 #ifndef _WIN32
@@ -23,8 +23,8 @@ static Callisto_Handle printf( Callisto_ExecutionContext* E )
 	
 	Callisto_formatArg( E, 0, format, &len );
 	
-	Cstr str;
-	Cstr formatString;
+	C_str str;
+	C_str formatString;
 
 	int onarg = 0;
 
@@ -73,8 +73,8 @@ static Callisto_Handle printf( Callisto_ExecutionContext* E )
 					case 's':
 					{
 						char buf[128];
-						unsigned int len = 127;
-						str.appendFormat( formatString, Callisto_formatArg(E, onarg, buf, &len) );
+						unsigned int l = 127;
+						str.appendFormat( formatString, Callisto_formatArg(E, onarg, buf, &l) );
 						terminatorFound = true;
 						break;
 					}
@@ -147,6 +147,7 @@ static Callisto_Handle epochtime( Callisto_ExecutionContext* E )
 	return Callisto_setValue( E, (int64_t)time(0) );
 }
 
+/*
 //------------------------------------------------------------------------------
 #ifdef __linux__
 #include <sys/time.h>
@@ -199,6 +200,7 @@ static Callisto_Handle getTimeOfDay( Callisto_ExecutionContext* E )
 }
 
 #endif
+*/
 
 //------------------------------------------------------------------------------
 static Callisto_Handle type_of( Callisto_ExecutionContext* E )
@@ -267,12 +269,13 @@ static const Callisto_FunctionEntry Callisto_stdlib[]=
 	{ "stlib::print", printf, 0 },
 	{ "stlib::printf", printf, 0 },
 	{ "stlib::printl", printl, 0 },
-	{ "stlib::getline", dogetline, 0 },
 	{ "stlib::random", ranint, 0 },
 	{ "stlib::srandom", sranint, 0 },
 	{ "stlib::epoch", epochtime, 0 },
-	{ "stlib::time", getTimeOfDay, 0 },
 	{ "stlib::typeof", type_of, 0 },
+
+//	{ "stlib::time", getTimeOfDay, 0 },
+//	{ "stlib::getline", dogetline, 0 },
 };
 
 //------------------------------------------------------------------------------

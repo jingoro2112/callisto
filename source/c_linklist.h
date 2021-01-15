@@ -1,9 +1,12 @@
-#ifndef LINKLIST_HPP
-#define LINKLIST_HPP
+#ifndef CALLISTO_LINKLIST_H
+#define CALLISTO_LINKLIST_H
 /*------------------------------------------------------------------------------*/
 
+namespace Callisto
+{
+	
 //-----------------------------------------------------------------------------
-template<class L> class CLinkList
+template<class L> class CCLinkList
 {
 public:
 
@@ -14,9 +17,9 @@ public:
 		Node *prev;
 	};
 
-	inline CLinkList( void (*clear)( L& item ) =0 );
+	inline CCLinkList( void (*clear)( L& item ) =0 );
 	
-	~CLinkList() { clear(); }
+	~CCLinkList() { clear(); }
 
 	inline void clear();
 	void resetIteration() { m_current = 0; }
@@ -123,14 +126,14 @@ public:
 	void sort( int (*compareFunc)(const L& item1, const L& item2) );
 
 	// copy and assignment are both groovy
-	inline CLinkList<L>( const CLinkList<L> &other );
-	inline CLinkList<L>& operator= (const CLinkList<L>& other );
+	inline CCLinkList<L>( const CCLinkList<L> &other );
+	inline CCLinkList<L>& operator= (const CCLinkList<L>& other );
 
 public:
 	class Iterator
 	{
 	public:
-		Iterator( const CLinkList<L> &list ) { iterate(list); }
+		Iterator( const CCLinkList<L> &list ) { iterate(list); }
 		Iterator() : m_list(0), m_current(0) {}
 		bool removeCurrent();
 		L* getCurrent() { return m_current ? &m_current->item : 0; }
@@ -145,14 +148,14 @@ public:
 		L& operator* () const { return m_current->item; }
 		const Iterator operator++() { if ( m_current ) m_current = m_current->next; return *this; }
 
-		void iterate( CLinkList<L> const& list ) { m_list = &list; m_current = m_list->m_list; }
+		void iterate( CCLinkList<L> const& list ) { m_list = &list; m_current = m_list->m_list; }
 
 		Iterator begin() const { return m_list ? Iterator(*m_list) : Iterator(); }
 		Iterator end() const { return Iterator(); }
 		unsigned int count() const { return m_list ? m_list->count() : 0; }
 
 	private:
-		CLinkList<L> const* m_list;
+		CCLinkList<L> const* m_list;
 		Node *m_current;
 	};
 
@@ -169,7 +172,7 @@ private:
 };
 
 //-----------------------------------------------------------------------------
-template<class L> CLinkList<L>::CLinkList( void (*clear)( L& item ) )
+template<class L> CCLinkList<L>::CCLinkList( void (*clear)( L& item ) )
 {
 	m_list = 0;
 	m_tail = 0;
@@ -179,7 +182,7 @@ template<class L> CLinkList<L>::CLinkList( void (*clear)( L& item ) )
 }
 
 //-----------------------------------------------------------------------------
-template<class L> void CLinkList<L>::clear()
+template<class L> void CCLinkList<L>::clear()
 {
 	while( m_list )
 	{
@@ -200,7 +203,7 @@ template<class L> void CLinkList<L>::clear()
 }
 
 //-----------------------------------------------------------------------------
-template<class L> void CLinkList<L>::reverse()
+template<class L> void CCLinkList<L>::reverse()
 {
 	Node* head = 0;
 
@@ -223,7 +226,7 @@ template<class L> void CLinkList<L>::reverse()
 }
 
 //-----------------------------------------------------------------------------
-template<class L> L* CLinkList<L>::addHead()
+template<class L> L* CCLinkList<L>::addHead()
 {
 	Node* N = new Node;
 
@@ -246,7 +249,7 @@ template<class L> L* CLinkList<L>::addHead()
 }
 
 //-----------------------------------------------------------------------------
-template<class L> L* CLinkList<L>::addTail()
+template<class L> L* CCLinkList<L>::addTail()
 {
 	Node* N = new Node;
 
@@ -271,7 +274,7 @@ template<class L> L* CLinkList<L>::addTail()
 }
 
 //-----------------------------------------------------------------------------
-template<class L> L* CLinkList<L>::addBeforeCurrent()
+template<class L> L* CCLinkList<L>::addBeforeCurrent()
 {
 	if ( !m_current )
 	{
@@ -298,7 +301,7 @@ template<class L> L* CLinkList<L>::addBeforeCurrent()
 }
 
 //-----------------------------------------------------------------------------
-template<class L> L* CLinkList<L>::addAfterCurrent()
+template<class L> L* CCLinkList<L>::addAfterCurrent()
 {
 	if ( !m_current )
 	{
@@ -325,7 +328,7 @@ template<class L> L* CLinkList<L>::addAfterCurrent()
 }
 
 //-----------------------------------------------------------------------------
-template<class L> bool CLinkList<L>::removeCurrent()
+template<class L> bool CCLinkList<L>::removeCurrent()
 {
 	if ( !m_current )
 	{
@@ -346,7 +349,7 @@ template<class L> bool CLinkList<L>::removeCurrent()
 			m_tail = 0;
 		}
 
-		if ( (m_list = m_current->next) )
+		if ( (m_list = m_current->next) != 0 )
 		{
 			m_list->prev = 0;
 		}
@@ -363,7 +366,7 @@ template<class L> bool CLinkList<L>::removeCurrent()
 
 		Node *prev = m_current->prev;
 		
-		if ( (m_current->prev->next = m_current->next) )
+		if ( (m_current->prev->next = m_current->next) != 0 )
 		{
 			m_current->next->prev = prev;
 		}
@@ -376,7 +379,7 @@ template<class L> bool CLinkList<L>::removeCurrent()
 }
 
 //-----------------------------------------------------------------------------
-template<class L> void CLinkList<L>::unlinkNode( Node *n, bool release )
+template<class L> void CCLinkList<L>::unlinkNode( Node *n, bool release )
 {
 	if ( !n )
 	{
@@ -429,7 +432,7 @@ template<class L> void CLinkList<L>::unlinkNode( Node *n, bool release )
 }
 
 //-----------------------------------------------------------------------------
-template<class L> bool CLinkList<L>::remove( L* item )
+template<class L> bool CCLinkList<L>::remove( L* item )
 {
 	if ( !item )
 	{
@@ -483,7 +486,7 @@ template<class L> bool CLinkList<L>::remove( L* item )
 }
 
 //------------------------------------------------------------------------------
-template<class L> L* CLinkList<L>::operator[]( const int index )
+template<class L> L* CCLinkList<L>::operator[]( const int index )
 {
 	int count = 0;
 	for ( Node *node = m_list ; node ; node = node->next, count++ )
@@ -498,7 +501,7 @@ template<class L> L* CLinkList<L>::operator[]( const int index )
 }
 
 //-----------------------------------------------------------------------------
-template<class L> void CLinkList<L>::sort( int (*compareFunc)(const L& item1, const L& item2) )
+template<class L> void CCLinkList<L>::sort( int (*compareFunc)(const L& item1, const L& item2) )
 {
 	if ( m_count < 2 || !compareFunc )
 	{
@@ -555,7 +558,7 @@ foundOne:
 }
 
 //------------------------------------------------------------------------------
-template<class L> CLinkList<L>::CLinkList( const CLinkList<L>& other )
+template<class L> CCLinkList<L>::CCLinkList( const CCLinkList<L>& other )
 {
 	m_list = 0;
 	m_tail = 0;
@@ -567,7 +570,7 @@ template<class L> CLinkList<L>::CLinkList( const CLinkList<L>& other )
 }
 
 //------------------------------------------------------------------------------
-template<class L> CLinkList<L>& CLinkList<L>::operator=( const CLinkList<L>& other )
+template<class L> CCLinkList<L>& CCLinkList<L>::operator=( const CCLinkList<L>& other )
 {
 	if ( this != &other )
 	{
@@ -585,7 +588,7 @@ template<class L> CLinkList<L>& CLinkList<L>::operator=( const CLinkList<L>& oth
 }
 
 //------------------------------------------------------------------------------
-template<class L> bool CLinkList<L>::Iterator::removeCurrent()
+template<class L> bool CCLinkList<L>::Iterator::removeCurrent()
 {
 	if ( !m_current )
 	{
@@ -593,9 +596,11 @@ template<class L> bool CLinkList<L>::Iterator::removeCurrent()
 	}
 	
 	Node* newEntry = m_current->prev; // make sure the list stays sane after the removal
-	(const_cast<CLinkList<L>*>(m_list))->remove( &m_current->item );
+	(const_cast<CCLinkList<L>*>(m_list))->remove( &m_current->item );
 	m_current = newEntry;
 	return true;
+}
+
 }
 
 #endif

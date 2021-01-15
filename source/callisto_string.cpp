@@ -1,4 +1,4 @@
-#include "../include/callisto.h"
+#include "callisto.h"
 #include "vm.h"
 
 //------------------------------------------------------------------------------
@@ -6,7 +6,7 @@ void tokenize( Callisto_ExecutionContext* E, const char* str, Callisto_Handle te
 {
 	// for delimeter == '0' whitespace is assumed
 	unsigned int pos = 0;
-	Cstr token;
+	C_str token;
 
 	for(;;)
 	{
@@ -423,7 +423,7 @@ Callisto_Handle static_upper( Callisto_ExecutionContext* E )
 }
 
 //------------------------------------------------------------------------------
-inline Callisto_Handle substringEx( Callisto_ExecutionContext* E, Cstr const& item, unsigned int from, unsigned int to )
+inline Callisto_Handle substringEx( Callisto_ExecutionContext* E, C_str const& item, unsigned int from, unsigned int to )
 {
 	return (from >= item.size() || to > item.size() || to < from) ? Callisto_setValue( E, item.subStr(from, to) )
 																  : Callisto_NULL_HANDLE;
@@ -432,7 +432,7 @@ inline Callisto_Handle substringEx( Callisto_ExecutionContext* E, Cstr const& it
 //------------------------------------------------------------------------------
 Callisto_Handle substring( Callisto_ExecutionContext* E ) 
 {
-	Cstr const& item = *E->object.string;
+	C_str const& item = *E->object.string;
 	unsigned int from = (unsigned int)Callisto_getIntArg(E, 0);
 	unsigned int to = (unsigned int)Callisto_getIntArg(E, 1);
 	if ( from < item.size()
@@ -451,7 +451,7 @@ Callisto_Handle static_substring( Callisto_ExecutionContext* E )
 	const Value* string = getValueFromArg( E, 0 );
 	if ( string && string->type == CTYPE_STRING )
 	{
-		Cstr const& item = *string->string;
+		C_str const& item = *string->string;
 		unsigned int from = (unsigned int)Callisto_getIntArg(E, 1);
 		unsigned int to = (unsigned int)Callisto_getIntArg(E, 2);
 		if ( from < item.size()

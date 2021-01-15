@@ -1,4 +1,4 @@
-#include "../include/callisto.h"
+#include "callisto.h"
 #include "vm.h"
 
 //------------------------------------------------------------------------------

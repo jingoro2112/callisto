@@ -1,16 +1,19 @@
-#ifndef LINKHASH_H
-#define LINKHASH_H
+#ifndef CALLISTO_LINKHASH_H
+#define CALLISTO_LINKHASH_H
 /*------------------------------------------------------------------------------*/
 
 #include <memory.h>
-#include "object_tpool.h"
+#include "c_objects.h"
+
+namespace Callisto
+{
 
 //-----------------------------------------------------------------------------
-template <class H> class CLinkHash
+template <class H> class CCLinkHash
 {
 public:
 
-	inline CLinkHash( void (*clear)( H& item ) =0 );
+	inline CCLinkHash( void (*clear)( H& item ) =0 );
 
 	void setClearFunction( void (*clear)(H& item) ) { m_clear = clear; }
 
@@ -46,8 +49,8 @@ public:
 	inline void sort( int (*compareFunc)(const H& item1, const H& item2) );
 
 	// copy and assignment are both groovy
-	inline CLinkHash<H>( const CLinkHash<H> &other );
-	inline CLinkHash<H>& operator=( const CLinkHash<H>& other );
+	inline CCLinkHash<H>( const CCLinkHash<H> &other );
+	inline CCLinkHash<H>& operator=( const CCLinkHash<H>& other );
 
 	void resetIteration() { m_current = 0; }
 	
@@ -91,7 +94,7 @@ public:
 		return 0;
 	}
 
-	~CLinkHash() { clear(); delete[] m_list; }
+	~CCLinkHash() { clear(); delete[] m_list; }
 
 	struct Node
 	{
@@ -105,10 +108,10 @@ public:
 	class Iterator
 	{
 	public:
-		Iterator( CLinkHash<H> const& list ) { iterate(list); }
+		Iterator( CCLinkHash<H> const& list ) { iterate(list); }
 		Iterator() : m_list(0), m_current(0) {}
 		void reset() { m_current = 0; }
-		void removeCurrent() { if ( m_current ) { Node* T = m_current->prevIter; (const_cast<CLinkHash<H>*>(m_list))->remove( m_current->key ); m_current = T; } }
+		void removeCurrent() { if ( m_current ) { Node* T = m_current->prevIter; (const_cast<CCLinkHash<H>*>(m_list))->remove( m_current->key ); m_current = T; } }
 		H* getCurrent() { return m_current ? &(m_current->item) : 0; }
 		H* getFirst() { m_current = m_list ? m_list->m_head : 0; return m_current ? &(m_current->item) : 0; }
 		H* getNext()
@@ -129,14 +132,14 @@ public:
 		const Iterator operator++() { if ( m_current ) m_current = m_current->nextIter; return *this; }
 
 		unsigned int getCurrentKey() { return m_current ? m_current->key : 0; }
-		void iterate( CLinkHash<H> const& list ) { m_list = &list; m_current = 0; }
+		void iterate( CCLinkHash<H> const& list ) { m_list = &list; m_current = 0; }
 
 		Iterator begin() const { return m_list ? Iterator(*m_list) : Iterator(); }
 		Iterator end() const { return Iterator(); }
 		unsigned int count() const { return m_list ? m_list->count() : 0; }
 
 	private:
-		CLinkHash<H> const* m_list;
+		CCLinkHash<H> const* m_list;
 		Node *m_current;
 	};
 
@@ -145,7 +148,7 @@ public:
 		
 private:
 
-	static CObjectTPool<Node> m_linkNodes;
+	static CTPool<Node> m_linkNodes;
 
 	inline void link( Node* N, bool addToTail );
 
@@ -159,7 +162,7 @@ private:
 };
 
 //-----------------------------------------------------------------------------
-template<class H> CLinkHash<H>::CLinkHash( void (*clear)( H& item ) )
+template<class H> CCLinkHash<H>::CCLinkHash( void (*clear)( H& item ) )
 {
 	m_head = 0;
 	m_current = 0;
@@ -171,7 +174,7 @@ template<class H> CLinkHash<H>::CLinkHash( void (*clear)( H& item ) )
 }
 
 //-----------------------------------------------------------------------------
-template<class H> void CLinkHash<H>::link( CLinkHash<H>::Node* N, bool addToTail )
+template<class H> void CCLinkHash<H>::link( CCLinkHash<H>::Node* N, bool addToTail )
 {
 	if ( !m_head )
 	{
@@ -209,7 +212,7 @@ template<class H> void CLinkHash<H>::link( CLinkHash<H>::Node* N, bool addToTail
 }
 
 //-----------------------------------------------------------------------------
-template<class H> H* CLinkHash<H>::add( const unsigned int key, bool addToTail /*=false*/ )
+template<class H> H* CCLinkHash<H>::add( const unsigned int key, bool addToTail /*=false*/ )
 {
 	Node *N = m_linkNodes.get();
 	
@@ -225,7 +228,7 @@ template<class H> H* CLinkHash<H>::add( const unsigned int key, bool addToTail /
 }
 
 //-----------------------------------------------------------------------------
-template<class H> H CLinkHash<H>::addItem( H item, const unsigned int key, bool addToTail /*=false*/ )
+template<class H> H CCLinkHash<H>::addItem( H item, const unsigned int key, bool addToTail /*=false*/ )
 {
 	Node *N = m_linkNodes.get();
 
@@ -242,7 +245,7 @@ template<class H> H CLinkHash<H>::addItem( H item, const unsigned int key, bool 
 }
 
 //-----------------------------------------------------------------------------
-template<class H> bool CLinkHash<H>::remove( unsigned int key )
+template<class H> bool CCLinkHash<H>::remove( unsigned int key )
 {
 	// find the position
 	const int p = (int)(key % m_mod);
@@ -269,7 +272,7 @@ template<class H> bool CLinkHash<H>::remove( unsigned int key )
 
 			if ( node == m_head )
 			{
-				if ( (m_head = node->nextIter) )
+				if ( (m_head = node->nextIter) != 0 )
 				{
 					m_head->prevIter = 0;
 				}
@@ -302,7 +305,7 @@ template<class H> bool CLinkHash<H>::remove( unsigned int key )
 }
 
 //-----------------------------------------------------------------------------
-template<class H> void CLinkHash<H>::resize( unsigned int newBucketCount )
+template<class H> void CCLinkHash<H>::resize( unsigned int newBucketCount )
 {
 	m_mod = newBucketCount < 4 ? 4 : newBucketCount;
 
@@ -322,7 +325,7 @@ template<class H> void CLinkHash<H>::resize( unsigned int newBucketCount )
 }
 
 //-----------------------------------------------------------------------------
-template<class H> void CLinkHash<H>::clear()
+template<class H> void CCLinkHash<H>::clear()
 {
 	memset( m_list, 0, m_mod*sizeof(Node*) );
 	while( m_head )
@@ -341,7 +344,7 @@ template<class H> void CLinkHash<H>::clear()
 }
 
 //-----------------------------------------------------------------------------
-template<class H> void CLinkHash<H>::reverseIterationOrder()
+template<class H> void CCLinkHash<H>::reverseIterationOrder()
 {
 	if ( m_head )
 	{
@@ -361,7 +364,7 @@ template<class H> void CLinkHash<H>::reverseIterationOrder()
 }
 
 //-----------------------------------------------------------------------------
-template<class H> void CLinkHash<H>::firstLinkToLast()
+template<class H> void CCLinkHash<H>::firstLinkToLast()
 {
 	if ( !m_head || !m_head->nextIter )
 	{   
@@ -383,7 +386,7 @@ template<class H> void CLinkHash<H>::firstLinkToLast()
 }
 
 //-----------------------------------------------------------------------------
-template<class H> void CLinkHash<H>::sort( int (*compareFunc)(const H& item1, const H& item2) )
+template<class H> void CCLinkHash<H>::sort( int (*compareFunc)(const H& item1, const H& item2) )
 {
 	if ( m_count < 2 || !compareFunc )
 	{
@@ -440,7 +443,7 @@ foundOne:
 }
 
 //------------------------------------------------------------------------------
-template<class H> CLinkHash<H>::CLinkHash( const CLinkHash<H>& other )
+template<class H> CCLinkHash<H>::CCLinkHash( const CCLinkHash<H>& other )
 {
 	m_head = 0;
 	m_current = 0;
@@ -455,7 +458,7 @@ template<class H> CLinkHash<H>::CLinkHash( const CLinkHash<H>& other )
 }
 
 //------------------------------------------------------------------------------
-template<class H> CLinkHash<H>& CLinkHash<H>::operator=( const CLinkHash<H>& other )
+template<class H> CCLinkHash<H>& CCLinkHash<H>::operator=( const CCLinkHash<H>& other )
 {
 	if ( this != &other )
 	{
@@ -472,6 +475,8 @@ template<class H> CLinkHash<H>& CLinkHash<H>::operator=( const CLinkHash<H>& oth
 	}
 	
 	return *this;
+}
+
 }
 
 #endif

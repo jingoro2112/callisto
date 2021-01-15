@@ -1,5 +1,5 @@
-#ifndef LOG_HPP
-#define LOG_HPP
+#ifndef CALLISTO_LOG_H
+#define CALLISTO_LOG_H
 /*------------------------------------------------------------------------------*/
 
 // log is NOT dependant on any of the other libraries in common so it
@@ -16,6 +16,9 @@
 #include <unistd.h>
 #include <sys/time.h>
 #endif
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
 // ultra-simple lightweight logging facility to get directly at
@@ -79,7 +82,7 @@ void loggingCallback( const char* msg )
 }
 
 
-CLog Log
+CLog C_Log
 Log.setMillisecondsCallback( MillisecondTickCallback );
 Log.setPIDCallback( PIDCallback );
 Log.setTIDCallback( TIDCallback );
@@ -283,5 +286,7 @@ private:
 	unsigned int m_logFlags;
 	unsigned int m_enabledVector;
 };
+
+}
 
 #endif

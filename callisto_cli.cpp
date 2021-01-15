@@ -1,11 +1,14 @@
-#include "include/callisto.h"
+#include "source/callisto.h"
 
 #include <stdio.h>
 
-#include "source/str.h"
+#include "source/c_str.h"
 #include "source/asciidump.h"
-#include "source/log.h"
-CLog Log;
+#include "source/c_log.h"
+
+extern Callisto::CLog C_Log;
+
+using namespace Callisto;
 
 int Callisto_tests( int runTest =0, bool debug =false );
 
@@ -31,7 +34,7 @@ void TMCallback( tm& timeStruct )
 //------------------------------------------------------------------------------
 int main( int argn, char** argv )
 {
-	Log.setTMCallback( TMCallback );
+	C_Log.setTMCallback( TMCallback );
 
 	if ( argn < 2 )
 	{
@@ -42,7 +45,7 @@ int main( int argn, char** argv )
 	
 	if ( *argv[1] == 'c' || *argv[1] == 'd' )
 	{
-		Cstr source;
+		C_str source;
 		if ( !source.fileToBuffer( argv[2] ) )
 		{
 			printf( "Could not open for compile [%s]\n", argv[2] );
@@ -54,7 +57,7 @@ int main( int argn, char** argv )
 
 		Callisto_parse( source.c_str(), source.size(), &out, &outLen, *argv[1] == 'd' );
 
-		Cstr bufOut;
+		C_str bufOut;
 		bufOut.set( out, outLen );
 		if ( argn > 3 )
 		{

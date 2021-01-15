@@ -1,19 +1,22 @@
-#ifndef OBJECT_TPOOL_H
-#define OBJECT_TPOOL_H
+#ifndef C_OBJECTS_H
+#define C_OBJECTS_H
 /*------------------------------------------------------------------------------*/
 
+namespace Callisto
+{
+
 //------------------------------------------------------------------------------
-template<class T> class CObjectTPool
+template<class T> class CTPool
 {
 public:
 
-	inline CObjectTPool( const int maxFreeSize =32, void (*clear)( T& item ) =0  );
-	inline ~CObjectTPool()
+	inline CTPool( const int maxFreeSize =32, void (*clear)( T& item ) =0  );
+	inline ~CTPool()
 	{
 		// free has had clear called on it already, so just clear the list
 		while( m_freeList )
 		{
-			Node* next = m_freeList->CObjectTPool_Node_next;
+			Node* next = m_freeList->CTPool_Node_next;
 			delete m_freeList;
 			m_freeList = next;
 		}
@@ -26,17 +29,17 @@ public:
 	T* get()
 	{
 		T* ret;
-		if ( (ret = m_freeList) )
+		if ( (ret = m_freeList) != 0 )
 		{
 			// alloc from free list
 			--m_freeSize;
-			m_freeList = m_freeList->CObjectTPool_Node_next;
+			m_freeList = m_freeList->CTPool_Node_next;
 		}
 		else
 		{
 			// create a new object to pool
 			ret = new Node;
-			((Node*)ret)->CObjectTPool_refCount = 1;
+			((Node*)ret)->CTPool_refCount = 1;
 		}
 		return ret;
 	}
@@ -57,8 +60,8 @@ private:
 	{
 		// choose names unlikely to collide (a downside to this approach)
 #pragma pack(4)
-		int CObjectTPool_refCount;
-		Node* CObjectTPool_Node_next;
+		int CTPool_refCount;
+		Node* CTPool_Node_next;
 #pragma pack()
 	};
 
@@ -69,7 +72,7 @@ private:
 };
 
 //------------------------------------------------------------------------------
-template<class T> CObjectTPool<T>::CObjectTPool( const int maxFreeSize /*=32*/, void (*clear)( T& item ) /*=0*/ )
+template<class T> CTPool<T>::CTPool( const int maxFreeSize /*=32*/, void (*clear)( T& item ) /*=0*/ )
 {
 	m_freeList = 0;
 	m_maxFreeSize = maxFreeSize;
@@ -78,15 +81,15 @@ template<class T> CObjectTPool<T>::CObjectTPool( const int maxFreeSize /*=32*/, 
 }
 
 //------------------------------------------------------------------------------
-template<class T> void CObjectTPool<T>::getReference( T* node )
+template<class T> void CTPool<T>::getReference( T* node )
 {
-	++((Node*)node)->CObjectTPool_refCount;
+	++((Node*)node)->CTPool_refCount;
 }
 
 //------------------------------------------------------------------------------
-template<class T> void CObjectTPool<T>::release( T* node )
+template<class T> void CTPool<T>::release( T* node )
 {
-	if ( !node || --((Node*)node)->CObjectTPool_refCount )
+	if ( !node || --((Node*)node)->CTPool_refCount )
 	{
 		return;
 	}
@@ -105,10 +108,12 @@ template<class T> void CObjectTPool<T>::release( T* node )
 		// it is now removed from the allocated list, add to the free list
 	
 		++m_freeSize;
-		++((Node*)node)->CObjectTPool_refCount;
-		((Node*)node)->CObjectTPool_Node_next = m_freeList;
+		++((Node*)node)->CTPool_refCount;
+		((Node*)node)->CTPool_Node_next = m_freeList;
 		m_freeList = (Node*)node;
 	}
+}
+
 }
 
 #endif

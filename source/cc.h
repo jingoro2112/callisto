@@ -1,11 +1,14 @@
-#ifndef CC_H
-#define CC_H
+#ifndef CALLISTO_CC_H
+#define CALLISTO_CC_H
 /*------------------------------------------------------------------------------*/
 
-#include "linklist.h"
-#include "str.h"
-#include "linkhash.h"
+#include "c_linklist.h"
+#include "c_str.h"
+#include "c_linkhash.h"
 #include "vm.h"
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
 struct LoopingStructure
@@ -18,8 +21,8 @@ struct LoopingStructure
 struct LinkEntry
 {
 	unsigned int enumKey;
-	Cstr target;
-	Cstr plainTarget;
+	C_str target;
+	C_str plainTarget;
 	unsigned int offset;
 };
 
@@ -38,7 +41,7 @@ struct CToken
 	bool spaceBefore;
 	bool spaceAfter;
 	ValueType type;
-	Cstr string;
+	C_str string;
 	union // for bswap packing
 	{
 		uint64_t hash;
@@ -67,7 +70,7 @@ struct SwitchCase
 {
 	CToken val;
 	int jumpIndex; // where to go to get to this case
-	Cstr enumName;
+	C_str enumName;
 	bool defaultCase;
 	bool nullCase;
 
@@ -77,7 +80,7 @@ struct SwitchCase
 //------------------------------------------------------------------------------
 struct SwitchContext
 {
-	CLinkList<SwitchCase> caseLocations;
+	CCLinkList<SwitchCase> caseLocations;
 	int breakTarget;
 	int tableLocationId;
 	char switchFlags;
@@ -94,29 +97,29 @@ enum BracketContext
 //------------------------------------------------------------------------------
 struct UnitEntry
 {
-	Cstr name;
+	C_str name;
 	unsigned int nameHash;
-	Cstr unqualifiedName;
+	C_str unqualifiedName;
 	bool member;
 
-	Cstr history;
-	Cstr bytecode;
+	C_str history;
+	C_str bytecode;
 	
 	int baseOffset;
-	CLinkList<LinkEntry> unitSym; // function symbols that are used
-	CLinkList<Cstr> parents;
-	CLinkHash<unsigned int> childAliases;
+	CCLinkList<LinkEntry> unitSym; // function symbols that are used
+	CCLinkList<C_str> parents;
+	CCLinkHash<unsigned int> childAliases;
 
 	// symbol table for finding locations in the code
-	CLinkHash<unsigned int> jumpIndexes;
-	CLinkList<CodePointer> jumpLinkSymbol; // location in the code to add the pointer to
-	CLinkList<LoopingStructure> loopTracking;
+	CCLinkHash<unsigned int> jumpIndexes;
+	CCLinkList<CodePointer> jumpLinkSymbol; // location in the code to add the pointer to
+	CCLinkList<LoopingStructure> loopTracking;
 
-	CLinkList<int> bracketContext;
+	CCLinkList<int> bracketContext;
 
-	CLinkList<SwitchContext> switchContexts;
+	CCLinkList<SwitchContext> switchContexts;
 
-	CLinkHash<Cstr> argumentTokenMapping;
+	CCLinkHash<C_str> argumentTokenMapping;
 
 	UnitEntry()
 	{
@@ -127,33 +130,33 @@ struct UnitEntry
 //------------------------------------------------------------------------------
 struct UnitNew
 {
-	Cstr fromSpace;
-	Cstr unitName;
+	C_str fromSpace;
+	C_str unitName;
 };
 
 //------------------------------------------------------------------------------
 struct Compilation
 {
-	Cstr err;
-	Cstr source;
+	C_str err;
+	C_str source;
 	unsigned int pos;
 	unsigned int lastPos;
 	static unsigned int jumpIndex;
 
-	CLinkList<UnitEntry> units;
+	CCLinkList<UnitEntry> units;
 	UnitEntry* currentUnit;
 
-	CLinkList<Cstr>* space;
-	CLinkList<Cstr> defaultSpace;
+	CCLinkList<C_str>* space;
+	CCLinkList<C_str> defaultSpace;
 
-	CLinkList<UnitNew> newUnitCalls;
-	CLinkHash<Cstr> symbolTable;
+	CCLinkList<UnitNew> newUnitCalls;
+	CCLinkHash<C_str> symbolTable;
 
-	CLinkHash<LinkEntry> CTokens; // table of CTokens
+	CCLinkHash<LinkEntry> CTokens; // table of CTokens
 
-	CLinkHash<int> enumCTokens;
+	CCLinkHash<int> enumCTokens;
 
-	Cstr* output;
+	C_str* output;
 };
 
 //------------------------------------------------------------------------------
@@ -237,20 +240,24 @@ const int c_highestPrecedence = 17;
 //------------------------------------------------------------------------------
 struct ExpressionContext
 {
-	ExpressionContext( Cstr& c, Cstr& h, CLinkList<LinkEntry>& s ) : bytecode(c), symbols(s), history(h) { oper.add(); }
+	ExpressionContext( C_str& c, C_str& h, CCLinkList<LinkEntry>& s ) : bytecode(c), symbols(s), history(h) { oper.add(); }
 
-	Cstr& bytecode;
-	CLinkList<LinkEntry>& symbols;
-	Cstr& history;
-	CLinkList< CLinkList<const Operation*> > oper;
+	C_str& bytecode;
+	CCLinkList<LinkEntry>& symbols;
+	C_str& history;
+	CCLinkList< CCLinkList<const Operation*> > oper;
 };
 
-const Cstr& formatToken( CToken const& token );
+const C_str& formatToken( CToken const& token );
 
-void putCToken( Cstr& code, CToken& CToken );
-void putStringToCodeStream( Cstr& code, Cstr& string );
+void putCToken( C_str& code, CToken& CToken );
+void putStringToCodeStream( C_str& code, C_str& string );
 
-bool getToken( Compilation& comp, Cstr& token, CToken& value );
+bool getToken( Compilation& comp, C_str& token, CToken& value );
+
+}
+
+using namespace Callisto;
 
 #endif
 

@@ -1,12 +1,14 @@
-#ifndef HASH_H
-#define HASH_H
+#ifndef CALLISTO_HASH_H
+#define CALLISTO_HASH_H
 /* ------------------------------------------------------------------------- */
 
-#include "../include/callisto.h"
 #include "arch.h"
 #include <string.h>
 
 // murmur
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
 inline unsigned int hash32( const void *dat, const size_t len )
@@ -144,6 +146,8 @@ inline uint64_t hash64( const void* buffer, const uint64_t length )
 	h ^= rotate_right(h, 29);
 
 	return h;
+}
+
 }
 
 #endif

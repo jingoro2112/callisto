@@ -1,13 +1,12 @@
 #include "vm.h"
+#include "value.h"
 #include "arch.h"
 #include "utf8.h"
 #include "array.h"
 
 #include <stdio.h>
 
-#include "object_tpool.h"
-
-int g_Callisto_lastErr = CE_NoError;
+#include "c_objects.h"
 
 #define D_EXECUTE(a) //a
 #define D_DUMPSTACK(a) //a
@@ -24,16 +23,21 @@ int g_Callisto_lastErr = CE_NoError;
 #define D_DEREFERENCE(a) //a
 #define D_MEMBERACCESS(a) //a
 
-CObjectTPool<ExecutionFrame> Callisto_ExecutionContext::m_framePool( 4, ExecutionFrame::clear );
+int g_Callisto_lastErr = CE_NoError;
 
-template<> CObjectTPool<CLinkHash<CLinkHash<UnitDefinition>>::Node> CLinkHash<CLinkHash<UnitDefinition>>::m_linkNodes( 0 );
-template<> CObjectTPool<CLinkHash<UnitDefinition>::Node> CLinkHash<UnitDefinition>::m_linkNodes( 6 );
-template<> CObjectTPool<CLinkHash<Cstr>::Node> CLinkHash<Cstr>::m_linkNodes( 16 );
-template<> CObjectTPool<CLinkHash<ChildUnit>::Node> CLinkHash<ChildUnit>::m_linkNodes( 16 );
+CTPool<ExecutionFrame> Callisto_ExecutionContext::m_framePool( 4, ExecutionFrame::clear );
+
+namespace Callisto
+{
+
+template<> CTPool<CCLinkHash<CCLinkHash<UnitDefinition>>::Node> CCLinkHash<CCLinkHash<UnitDefinition>>::m_linkNodes( 0 );
+template<> CTPool<CCLinkHash<UnitDefinition>::Node> CCLinkHash<UnitDefinition>::m_linkNodes( 6 );
+template<> CTPool<CCLinkHash<C_str>::Node> CCLinkHash<C_str>::m_linkNodes( 16 );
+template<> CTPool<CCLinkHash<ChildUnit>::Node> CCLinkHash<ChildUnit>::m_linkNodes( 16 );
 
 //------------------------------------------------------------------------------
 void lineFromCode( Callisto_Context* context, unsigned int base, unsigned int pos,
-				   Cstr* rawSnippet =0, Cstr* formatSnippet =0, unsigned int* line =0, unsigned int* col =0 )
+				   C_str* rawSnippet =0, C_str* formatSnippet =0, unsigned int* line =0, unsigned int* col =0 )
 {
 	unsigned int p = base;
 	unsigned int adjustedPos = base + pos;
@@ -70,7 +74,7 @@ void lineFromCode( Callisto_Context* context, unsigned int base, unsigned int po
 		*col = c;
 	}
 
-	Cstr snippet( context->text.c_str() + begin + 1, end - begin );
+	C_str snippet( context->text.c_str() + begin + 1, end - begin );
 	if ( snippet.size() > 0 && snippet[snippet.size() - 1] == '\n' )
 	{
 		snippet.shave(1);
@@ -133,11 +137,11 @@ void lineFromCode( Callisto_Context* context, unsigned int base, unsigned int po
 }
 
 //------------------------------------------------------------------------------
-static inline void clearExe( CLinkHash<Callisto_ExecutionContext>::Node& E )
+static inline void clearExe( CCLinkHash<Callisto_ExecutionContext>::Node& E )
 {
 	E.item.clear();
 }
-template<> CObjectTPool<CLinkHash<Callisto_ExecutionContext>::Node> CLinkHash<Callisto_ExecutionContext>::m_linkNodes( 4, clearExe );
+template<> CTPool<CCLinkHash<Callisto_ExecutionContext>::Node> CCLinkHash<Callisto_ExecutionContext>::m_linkNodes( 4, clearExe );
 
 //------------------------------------------------------------------------------
 int execute( Callisto_ExecutionContext *exec )
@@ -145,44 +149,39 @@ int execute( Callisto_ExecutionContext *exec )
 	const char* Tbase = exec->callisto->text.c_str();
 	const char* T = Tbase + exec->textOffsetToResume;
 	ChildUnit* child = 0;
+	UnitDefinition* unit = 0;
 	unsigned int key = 0;
 	unsigned int sourcePos = 0;
 	Value* tempValue = 0;
 	Callisto_Context* callisto = exec->callisto;
-	CLinkHash<Value>* useNameSpace = 0;
+	CCLinkHash<Value>* useNameSpace = 0;
 	int operand1;
 	int operand2;
 
-	exec->state = Callisto_ThreadState::Running; // yes I am
 	exec->warning = 0;
-	
 	UnitDefinition* unitDefinition = exec->frame->unitContainer.u;
-	CLinkHash<Value>* localSpace = exec->frame->unitContainer.unitSpace;
+	CCLinkHash<Value>* localSpace = exec->frame->unitContainer.unitSpace;
+
+	if ( exec->state & Callisto_ThreadState::FromC )
+	{
+		exec->state &= ~Callisto_ThreadState::FromC;
+		exec->returnHandle = 0;
+		goto returnfrom_C;
+	}
 
 	for(;;)
 	{
 		if ( exec->warning )
 		{
-			if ( exec->warning & 0x80 )
-			{
-				exec->warning = 0;
-				if ( exec->state == Callisto_ThreadState::Waiting )
-				{
-					popOne( exec );
-					exec->numberOfArgs = 0;
-//					goto DoYield;
-				}
-			}
-
 			if ( callisto->options.warningCallback )
 			{
 				if ( sourcePos )
 				{
-					Cstr formatSnippet;
+					C_str formatSnippet;
 					unsigned int offset = (unsigned int)(T - Tbase);
 					unsigned int topAccumulator = 0;
-					unsigned int line;
-					unsigned int col;
+					unsigned int line = 0;
+					unsigned int col = 0;
 					for( TextSection* debug = callisto->textSections.getFirst();
 						 debug;
 						 debug = callisto->textSections.getNext() )
@@ -213,10 +212,10 @@ int execute( Callisto_ExecutionContext *exec )
 			exec->warning = CE_NoError;
 		}
 		
-		D_EXECUTE(Log("[%s] stack[%d] >>", formatOpcode( (char)*T ).c_str(), exec->stackPointer));
+		D_EXECUTE(C_Log("[%s] stack[%d] >>", formatOpcode( (char)*T ).c_str(), exec->stackPointer));
 		D_DUMPSYMBOLS( dumpSymbols(callisto) );
 		D_DUMPSTACK(dumpStack(exec));
-		D_DUMPSTACK(Log("----------------<<<<<<<"));
+		D_DUMPSTACK(C_Log("----------------<<<<<<<"));
 
  		switch( *T++ )
 		{
@@ -225,7 +224,7 @@ int execute( Callisto_ExecutionContext *exec )
 				exec->numberOfArgs = *T++;
 				key = ntohl( *(unsigned int *)T );
 				T += 4;
-				
+
 				int s = exec->stackPointer - (exec->numberOfArgs + 1);
 
 				clearValue( exec->object );
@@ -244,15 +243,15 @@ int execute( Callisto_ExecutionContext *exec )
 					}
 
 					valueMirror( &exec->object, tempValue );
-					
-					CLinkHash<UnitDefinition>* table = callisto->typeFunctions.get( exec->object.type );
+
+					CCLinkHash<UnitDefinition>* table = callisto->typeFunctions.get( exec->object.type );
 					if ( !table )
 					{
 						exec->warning = CE_FunctionTableNotFound;
 						break;
 					}
 
-					if ( !(unitDefinition = table->get(key)) || !unitDefinition->function )
+					if ( ((unitDefinition = table->get(key))==0) || !unitDefinition->function )
 					{
 						exec->warning = CE_FunctionTableEntryNotFound;
 						unitDefinition = exec->frame->unitContainer.u;
@@ -273,6 +272,49 @@ int execute( Callisto_ExecutionContext *exec )
 				continue;
 			}
 
+			case O_Sleep:
+			{
+				exec->numberOfArgs = 1;
+				tempValue = exec->stack + (exec->stackPointer - 1);
+				tempValue = (tempValue->type == CTYPE_REFERENCE) ? tempValue->v : tempValue;
+				int64_t milliseconds;
+				if ( tempValue->type == CTYPE_INT )
+				{
+					milliseconds = tempValue->i64;
+				}
+				else if ( tempValue->type == CTYPE_FLOAT )
+				{
+					milliseconds = (int64_t)tempValue->d;
+				}
+				else
+				{
+					milliseconds = 0;
+				}
+
+				clearValue( *(exec->stack + (exec->stackPointer - 1)) );
+
+				exec->textOffsetToResume = (unsigned int)(T - Tbase);
+
+				if ( milliseconds > 0 )
+				{
+					exec->sleepUntil = Callisto_getCurrentMilliseconds() + milliseconds;
+				}
+				
+				return CE_NoError;
+			}
+
+			case O_Yield:
+			{
+				getNextStackEntry( exec ); // returns a null
+				exec->textOffsetToResume = (unsigned int)(T - Tbase);
+				return CE_NoError;
+			}
+			
+			case O_WaitGlobalOnly:
+			{
+				exec->state |= Callisto_ThreadState::Wait;
+			}
+
 			case O_CallGlobalOnly: // called with :: to skip local resolution
 			{
 				exec->numberOfArgs = *T++;
@@ -281,13 +323,18 @@ int execute( Callisto_ExecutionContext *exec )
 				goto globalUnitCheck;
 			}
 
+			case O_Wait:
+			{
+				exec->state |= Callisto_ThreadState::Wait;
+			}
+			
 			case O_CallLocalThenGlobal:
 			{
 				exec->numberOfArgs = *T++;
 				key = ntohl( *(unsigned int *)T );
 				T += 4;
 
-				D_EXECUTE(Log( "O_CallLocalThenGlobal looking for [%s]", formatSymbol(callisto,key).c_str()));
+				D_EXECUTE(C_Log( "O_CallLocalThenGlobal looking for [%s]", formatSymbol(callisto,key).c_str()));
 
 				child = unitDefinition->childUnits.get( key ); // try current unit
 				if ( child )
@@ -297,9 +344,9 @@ int execute( Callisto_ExecutionContext *exec )
 				}
 				else
 globalUnitCheck:
-				if ( !(unitDefinition = callisto->unitDefinitions.get(key)) ) // unit name?
+				if ( (unitDefinition = callisto->unitDefinitions.get(key))==0 ) // unit name?
 				{
-					if ( (tempValue = localSpace->get(key)) ) // calling a variable then?
+					if ( (tempValue = localSpace->get(key)) != 0 ) // calling a variable then?
 					{
 						tempValue = (tempValue->type == CTYPE_REFERENCE) ? tempValue->v : tempValue;
 						if ( tempValue->type == CTYPE_UNIT )
@@ -341,17 +388,39 @@ callUnitCFunction:
 
 					// 10       <- ptr <- frame
 
-					Callisto_Handle ret = unitDefinition->function( exec );
+					// do a fast check to see if anything needs to be
+					// serviced
+					if ( exec->state & (Callisto_ThreadState::Wait|Callisto_ThreadState::Yield) ) 
+					{
+						exec->textOffsetToResume = (unsigned int)(T - Tbase);
+						
+						if ( exec->state & Callisto_ThreadState::Wait )
+						{
+							exec->state = Callisto_ThreadState::FromC;
+							exec->function = unitDefinition->function;
+							return Callisto_startThread( exec );
+						}
+						else if ( exec->state & Callisto_ThreadState::Yield )
+						{
+							exec->state &= ~Callisto_ThreadState::Yield;
+							return CE_NoError;
+						}
+					}
+					else
+					{
+						exec->returnHandle = unitDefinition->function( exec );
+					}
 
-					if ( !exec->numberOfArgs )
+returnfrom_C:
+					if ( !(exec->numberOfArgs--) )
 					{
 						getNextStackEntry( exec );
 					}
 					else 
 					{
-						if ( exec->numberOfArgs > 1 )
+						if ( exec->numberOfArgs )
 						{
-							popNum( exec, exec->numberOfArgs - 1);
+							popNum( exec, exec->numberOfArgs );
 						}
 
 						clearValue( *(exec->stack + (exec->stackPointer - 1)) );
@@ -360,20 +429,20 @@ callUnitCFunction:
 					// at this point the stack has a null on top, need
 					// to move a value into it?
 
-					if ( ret )
+					if ( exec->returnHandle )
 					{
-						if ( ret == Callisto_THIS_HANDLE )
+						if ( exec->returnHandle == Callisto_THIS_HANDLE )
 						{
 							valueMirror( (exec->stack + (exec->stackPointer - 1)), &exec->object ); 
 						}
-						else if ( !(tempValue = callisto->globalNameSpace->get(ret)) )
+						else if ( (tempValue = callisto->globalNameSpace->get(exec->returnHandle)) == 0 )
 						{
-							exec->warning |= CE_HandleNotFound; // in case the caller called 'wait'
+							exec->warning = CE_HandleNotFound;
 						}
 						else
 						{
 							valueMove( exec->stack + (exec->stackPointer - 1), tempValue );
-							callisto->globalNameSpace->remove( ret );
+							callisto->globalNameSpace->remove( exec->returnHandle );
 						}
 					}
 
@@ -387,12 +456,15 @@ callUnitCFunction:
 				{
 					useNameSpace = Value::m_unitSpacePool.get();
 doUnitCall:
-					D_EXECUTE(Log( "O_CallLocalThenGlobal found callisto unit [%d] args @[%d]", exec->numberOfArgs, unitDefinition->textOffset));
+					exec->state &= ~Callisto_ThreadState::Wait; // waiting on an in-code unit is meaningless
+					
+					D_EXECUTE(C_Log( "O_CallLocalThenGlobal found callisto unit [%d] args @[%d]", exec->numberOfArgs, unitDefinition->textOffset));
 
 					tempValue = getNextStackEntry( exec ); // create a call-frame
+
 					tempValue->frame = Callisto_ExecutionContext::m_framePool.get();
 					tempValue->type32 = CTYPE_FRAME;
-					
+
 					tempValue->frame->unitContainer.u = unitDefinition;
 					tempValue->frame->unitContainer.type32 = CTYPE_UNIT;
 					localSpace = (tempValue->frame->unitContainer.unitSpace = useNameSpace);
@@ -405,25 +477,9 @@ doUnitCall:
 					tempValue->frame->next = exec->frame;
 					exec->frame = tempValue->frame;
 				}
-
+				
 				continue;
 			}
-
-/*
-			case O_Yield:
-			{
-
-				exec->numberOfArgs = *T++;
-DoYield:
-				exec->Args = exec->stack + (exec->stackPointer - exec->numberOfArgs);
-				exec->textOffsetToResume = (unsigned int)(T - Tbase);
-				exec->state = Callisto_ThreadState::Waiting;
-
-				// on resume a value will be on top of the stack
-
-				return CE_NoError;
-			}
-*/
 
 			case O_CallFromUnitSpace:
 			{
@@ -470,6 +526,7 @@ DoYield:
 
 					tempValue = exec->stack + (exec->stackPointer - 1);
 					clearValueOnly( *tempValue );
+					
 					valueMove( tempValue, &exec->frame->unitContainer );
 				}
 				else // normal return
@@ -492,7 +549,7 @@ DoYield:
 					if ( R->type == CTYPE_REFERENCE )
 					{
 						Value *RV = R->v;
-						D_EXECUTE(Log("required deep-copy for return"));
+						D_EXECUTE(C_Log("required deep-copy for return"));
 
 						R->ref1 = R->v->ref1;
 						if ( !((R->type32 = RV->type32) & BIT_PASS_BY_VALUE) )
@@ -512,47 +569,76 @@ DoYield:
 				continue;
 			}
 
+			case O_ThreadGlobalOnly:
+			{
+				exec->numberOfArgs = *T++;
+				key = ntohl( *(unsigned int *)T );
+				T += 4;
+
+				D_EXECUTE(C_Log( "O_ThreadGlobalOnly looking for [%s]", formatSymbol(callisto,key).c_str()));
+
+				goto globalThreadCheck;
+			}
 
 			case O_Thread:
 			{
 				exec->numberOfArgs = *T++;
+				key = ntohl( *(unsigned int *)T );
+				T += 4;
 
-				tempValue = exec->stack + (exec->stackPointer - exec->numberOfArgs);
-				if ( tempValue->type == CTYPE_REFERENCE )
+				D_EXECUTE(C_Log( "O_Thread looking for [%s]", formatSymbol(callisto,key).c_str()));
+
+				child = unitDefinition->childUnits.get( key ); // try current unit
+				if ( child )
 				{
-					tempValue = tempValue->v;
+					unit = child->child;
+				}
+				else
+globalThreadCheck:
+				if ( (unit = callisto->unitDefinitions.get(key))==0 ) // unit name?
+				{
+					if ( (tempValue = localSpace->get(key)) != 0 ) // calling a variable then?
+					{
+						tempValue = (tempValue->type == CTYPE_REFERENCE) ? tempValue->v : tempValue;
+						
+						if ( tempValue->type == CTYPE_UNIT )
+						{
+							unit = tempValue->u;
+						}
+					}
 				}
 
-				if ( (tempValue->type != CTYPE_UNIT) || (tempValue->u->function) )
+				if ( !unit )
 				{
-					popNum( exec, exec->numberOfArgs ); // clean up
-					exec->warning = CE_FirstThreadArgumentMustBeUnit;
-					getNextStackEntry( exec ); // null return
+					unitDefinition = exec->frame->unitContainer.u;
+					exec->warning = CE_UnitNotFound;
+					popNum( exec, exec->numberOfArgs );
+					getNextStackEntry( exec );
+					popNum( exec, exec->numberOfArgs );
+					getNextStackEntry( exec );
 					continue;
 				}
 
-				// allocate a new thread
-				Callisto_ExecutionContext* newExec = getExecutionContext( callisto );
-
-				// set up it's call frame
-				newExec->frame->unitContainer.u = tempValue->u;
-				newExec->frame->unitContainer.unitSpace = Value::m_unitSpacePool.get();
-				newExec->frame->unitContainer.type32 = CTYPE_UNIT;
-				newExec->frame->returnVector = 0; // return when done
-				newExec->textOffsetToResume = tempValue->u->textOffset;
-				newExec->frame->numberOfArguments = exec->numberOfArgs - 1;
-
-				for( int i=0; i<newExec->frame->numberOfArguments ; ++i )
+				if ( unit->function )
 				{
-					valueMove( getNextStackEntry(newExec), exec->stack + (exec->stackPointer - i) );
+					exec->warning = CE_CannotSpawnThreadFromCFunc;
+					popNum( exec, exec->numberOfArgs );
+					getNextStackEntry( exec );
+					continue;
 				}
 
-				// guaranteeed to be at least one arg, pop off all but
-				// one and change it to the int thread return value
-				popNum( exec, newExec->frame->numberOfArguments );
+				D_EXECUTE(C_Log( "O_CallLocalThenGlobal found callisto unit [%d] args @[%d]", exec->numberOfArgs, unitDefinition->textOffset));
+
+				Callisto_ExecutionContext* newExec = doCreateThreadFromUnit( callisto, unit, exec->numberOfArgs );
 				
-				tempValue = exec->stack + (exec->stackPointer - 1);
-				clearValue( *tempValue );
+				for( int i=0; i<exec->numberOfArgs ; ++i )
+				{
+					valueMove( newExec->stack + newExec->stackPointer - (i+2),
+							   exec->stack + (exec->stackPointer - (i+1)) );
+				}
+				popNum( exec, exec->numberOfArgs );
+
+				tempValue = getNextStackEntry( exec );
 				tempValue->type32 = CTYPE_INT;
 				tempValue->i64 = newExec->threadId;
 
@@ -598,7 +684,7 @@ DoYield:
 												   tempValue->string->size(),
 												   &out,
 												   &size,
-												   debug)) )
+												   debug)) != 0 )
 					{
 						popNum( exec, exec->numberOfArgs );
 						continue;
@@ -639,9 +725,9 @@ DoYield:
 				key = ntohl(*(unsigned int *)T );
 				T += 4;
 
-				if ( !(tempValue = localSpace->get(key)) )
+				if ( (tempValue = localSpace->get(key)) == 0 )
 				{
-					D_EXECUTE(Log("adding to space"));
+					D_EXECUTE(C_Log("adding to space"));
 					tempValue = localSpace->add( key );
 				}
 				else
@@ -651,7 +737,7 @@ DoYield:
 
 				if ( number < exec->frame->numberOfArguments )
 				{
-					D_EXECUTE(Log("Claiming COPY arg #%d [0x%08X]", (int)number, key ));
+					D_EXECUTE(C_Log("Claiming COPY arg #%d [0x%08X]", (int)number, key ));
 					deepCopy( tempValue, exec->stack + (exec->stackPointer - ((1 + exec->frame->numberOfArguments) - number)) );
 				}
 				
@@ -664,9 +750,9 @@ DoYield:
 				key = ntohl(*(unsigned int *)T);
 				T += 4;
 
-				if ( !(tempValue = localSpace->get(key)) )
+				if ( (tempValue = localSpace->get(key)) == 0 )
 				{
-					D_EXECUTE(Log("adding to space"));
+					D_EXECUTE(C_Log("adding to space"));
 					tempValue = localSpace->add( key );
 				}
 				else
@@ -676,7 +762,7 @@ DoYield:
 
 				if ( number < exec->frame->numberOfArguments )
 				{
-					D_EXECUTE(Log("Claiming arg #%d [0x%08X]", (int)number, key ));
+					D_EXECUTE(C_Log("Claiming arg #%d [0x%08X]", (int)number, key ));
 					valueMirror( tempValue, exec->stack + (exec->stackPointer - ((1 + exec->frame->numberOfArguments) - number)) );
 				}
 
@@ -693,12 +779,12 @@ DoYield:
 
 			case O_LiteralInt8:
 			{
-				D_EXECUTE(Log("O_LiteralInt8 [%d][0x%02X][0x%016llX]", (int)*T, (unsigned char)*T, (int64_t)(int8_t)*T ));
+				D_EXECUTE(C_Log("O_LiteralInt8 [%d][0x%02X][0x%016llX]", (int)*T, (unsigned char)*T, (int64_t)(int8_t)*T ));
 				tempValue = getNextStackEntry( exec );
 				tempValue->type32 = CTYPE_INT;
 				tempValue->i64 = (int64_t)(int8_t)*T++;
 
-				D_EXECUTE(Log("out [%lld][0x%016llX]", tempValue->i64, tempValue->i64 ));
+				D_EXECUTE(C_Log("out [%lld][0x%016llX]", tempValue->i64, tempValue->i64 ));
 				continue;
 			}
 			
@@ -763,7 +849,7 @@ DoYield:
 			{
 				key = ntohl( *(unsigned int *)T );
 				T += 4;
-				if ( !(tempValue = localSpace->get(key)) )
+				if ( (tempValue = localSpace->get(key)) == 0 )
 				{
 tryLoadingUnit:
 					// is it a unit name?
@@ -818,12 +904,12 @@ LabelToStack:
 				tempValue = exec->stack + (exec->stackPointer - 1);
 				if ( (tempValue->type == CTYPE_REFERENCE) ? tempValue->v->i64 : tempValue->i64 )
 				{
-					D_EXECUTE(Log("O_BZ: NOT branching"));
+					D_EXECUTE(C_Log("O_BZ: NOT branching"));
 					T += 4; // not zero, do not branch
 				}
 				else
 				{
-					D_EXECUTE(Log("O_BZ: branching"));
+					D_EXECUTE(C_Log("O_BZ: branching"));
 					T += (int)ntohl(*(int *)T);
 				}
 				
@@ -836,12 +922,12 @@ LabelToStack:
 				tempValue = exec->stack + (exec->stackPointer - 1);
 				if ( (tempValue->type == CTYPE_REFERENCE) ? tempValue->v->i64 : tempValue->i64 )
 				{
-					D_EXECUTE(Log("O_BZ16: NOT branching"));
+					D_EXECUTE(C_Log("O_BZ16: NOT branching"));
 					T += 2; // not zero, do not branch
 				}
 				else
 				{
-					D_EXECUTE(Log("O_BZ16: branching"));
+					D_EXECUTE(C_Log("O_BZ16: branching"));
 					T += (int16_t)ntohs( *(int16_t *)T );
 				}
 
@@ -854,12 +940,12 @@ LabelToStack:
 				tempValue = exec->stack + (exec->stackPointer - 1);
 				if ( (tempValue->type == CTYPE_REFERENCE) ? tempValue->v->i64 : tempValue->i64 )
 				{
-					D_EXECUTE(Log("O_BZ8: NOT branching"));
+					D_EXECUTE(C_Log("O_BZ8: NOT branching"));
 					++T;
 				}
 				else
 				{
-					D_EXECUTE(Log("O_BZ8: branching"));
+					D_EXECUTE(C_Log("O_BZ8: branching"));
 					T += *T;
 				}
 
@@ -872,12 +958,12 @@ LabelToStack:
 				tempValue = exec->stack + (exec->stackPointer - 1);
 				if ( (tempValue->type == CTYPE_REFERENCE) ? tempValue->v->i64 : tempValue->i64 )
 				{
-					D_EXECUTE(Log("O_BNZ: branching"));
+					D_EXECUTE(C_Log("O_BNZ: branching"));
 					T += (int)ntohl(*(int *)T); 
 				}
 				else
 				{
-					D_EXECUTE(Log("O_BNZ: not branching"));
+					D_EXECUTE(C_Log("O_BNZ: not branching"));
 					T += 4; // zero, do not branch
 				}
 
@@ -890,12 +976,12 @@ LabelToStack:
 				tempValue = exec->stack + (exec->stackPointer - 1);
 				if ( (tempValue->type == CTYPE_REFERENCE) ? tempValue->v->i64 : tempValue->i64 )
 				{
-					D_EXECUTE(Log("O_BNZ16: branching"));
+					D_EXECUTE(C_Log("O_BNZ16: branching"));
 					T += (int16_t)ntohs( *(int16_t *)T );
 				}
 				else
 				{
-					D_EXECUTE(Log("O_BNZ16: NOT branching"));
+					D_EXECUTE(C_Log("O_BNZ16: NOT branching"));
 					T += 2; // not zero, do not branch
 				}
 
@@ -908,12 +994,12 @@ LabelToStack:
 				tempValue = exec->stack + (exec->stackPointer - 1);
 				if ( (tempValue->type == CTYPE_REFERENCE) ? tempValue->v->i64 : tempValue->i64 )
 				{
-					D_EXECUTE(Log("O_BNZ8: branching"));
+					D_EXECUTE(C_Log("O_BNZ8: branching"));
 					T += *T;
 				}
 				else
 				{
-					D_EXECUTE(Log("O_BNZ8: NOT branching"));
+					D_EXECUTE(C_Log("O_BNZ8: NOT branching"));
 					++T;
 				}
 
@@ -943,7 +1029,7 @@ LabelToStack:
 				tempValue->frame = Callisto_ExecutionContext::m_framePool.get();
 				tempValue->type32 = CTYPE_FRAME;
 
-				if ( !(tempValue->frame->unitContainer.u = callisto->unitDefinitions.get(key)) )
+				if ( (tempValue->frame->unitContainer.u = callisto->unitDefinitions.get(key)) == 0 )
 				{
 					exec->warning = CE_UnitNotFound;
 					
@@ -1002,7 +1088,7 @@ nextParent:
 				unsigned int valueKey = ntohl( *(unsigned int *)T );
 				T += 4;
 
-				if ( !(tempValue = localSpace->get(valueKey)) )
+				if ( (tempValue = localSpace->get(valueKey)) == 0 )
 				{
 					tempValue = localSpace->add( valueKey );
 				}
@@ -1012,7 +1098,7 @@ nextParent:
 				}
 
 				Value* tempKey;
-				if ( !(tempKey = localSpace->get(keyKey)) )
+				if ( (tempKey = localSpace->get(keyKey)) == 0 )
 				{
 					tempKey = localSpace->add( keyKey );
 				}
@@ -1087,10 +1173,10 @@ nextParent:
 
 			case O_IteratorGetNextValueOrBranch:
 			{
-				unsigned int key = ntohl( *(unsigned int *)T );
+				key = ntohl( *(unsigned int *)T );
 				T += 4;
 
-				if ( !(tempValue = localSpace->get(key)) )
+				if ( (tempValue = localSpace->get(key)) == 0 )
 				{
 					tempValue = localSpace->add( key );
 				}
@@ -1245,7 +1331,7 @@ nextParent:
 							continue;
 						}
 
-						Cstr formatSnippet;
+						C_str formatSnippet;
 						unsigned int line;
 						unsigned int col;
 						lineFromCode( callisto, debug->sourceOffset + topAccumulator, sourcePos, 0, &formatSnippet, &line, &col );
@@ -1263,9 +1349,9 @@ nextParent:
 }
 
 //------------------------------------------------------------------------------
-const Cstr& formatType( int type )
+const C_str& formatType( int type )
 {
-	static Cstr ret;
+	static C_str ret;
 	switch( type )
 	{
 		case CTYPE_NULL: return ret = "CTYPE_NULL";
@@ -1281,18 +1367,18 @@ const Cstr& formatType( int type )
 }
 
 //------------------------------------------------------------------------------
-const Cstr& formatSymbol( Callisto_Context* C, unsigned int key )
+const C_str& formatSymbol( Callisto_Context* C, unsigned int key )
 {
-	static Cstr ret;
-	Cstr* symbol = C->symbols.get( key );
+	static C_str ret;
+	C_str* symbol = C->symbols.get( key );
 	ret.format( "0x%08X:%s", key, symbol ? symbol->c_str() : "<null>" );
 	return ret;
 }
 
 //------------------------------------------------------------------------------
-const Cstr& formatValue( Value const& value )
+const C_str& formatValue( Value const& value )
 {
-	static Cstr ret;
+	static C_str ret;
 	switch( value.type )
 	{
 		case CTYPE_NULL: return ret.format("NULL");
@@ -1319,9 +1405,9 @@ const Cstr& formatValue( Value const& value )
 }
 
 //------------------------------------------------------------------------------
-const Cstr& formatOpcode( int opcode )
+const C_str& formatOpcode( int opcode )
 {
-	static Cstr ret;
+	static C_str ret;
 	int i;
 	for( i=0; c_opcodes[i].opcode != 0; ++i )
 	{
@@ -1344,7 +1430,7 @@ const Cstr& formatOpcode( int opcode )
 }
 
 //------------------------------------------------------------------------------
-Callisto_ExecutionContext* getExecutionContext( Callisto_Context* C, const long threadId )
+Callisto_ExecutionContext* getExecutionContext( Callisto_Context* C, const int threadId )
 {
 	if ( threadId )
 	{
@@ -1379,7 +1465,7 @@ Callisto_ExecutionContext* getExecutionContext( Callisto_Context* C, const long 
 }
 
 //------------------------------------------------------------------------------
-void readStringFromCodeStream( Cstr& string, const char** T )
+void readStringFromCodeStream( C_str& string, const char** T )
 {
 	unsigned int len;
 	len = ntohl(*(unsigned int *)*T );
@@ -1403,7 +1489,7 @@ void doAssign( Callisto_ExecutionContext* E, const int operand1, const int opera
 	
 	if ( to->type != CTYPE_REFERENCE )
 	{
-		D_ASSIGN(Log("Assigning to the stack is undefined"));
+		D_ASSIGN(C_Log("Assigning to the stack is undefined"));
 		E->warning = CE_AssignedValueToStack;
 		return;
 	}
@@ -1420,14 +1506,14 @@ void doAssign( Callisto_ExecutionContext* E, const int operand1, const int opera
 	{
 		from = from->v;
 		
-		D_ASSIGN(Log("offstack to offstack type [%d]", from->type));
+		D_ASSIGN(C_Log("offstack to offstack type [%d]", from->type));
 
 		clearValueOnly( *to );
 		valueMirror( to, from );
 	}
 	else
 	{
-		D_ASSIGN(Log("assign from stack->offstack, copy data from type [%d]", from->type));
+		D_ASSIGN(C_Log("assign from stack->offstack, copy data from type [%d]", from->type));
 
 		// can move the value off the stack, by definition it will not
 		// be used directly from there
@@ -1451,16 +1537,16 @@ void doAddAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 		if ( to->type == CTYPE_INT )
 		{
 			to->i64 += from->i64;
-			D_OPERATOR(Log("addAssign <1> %lld", to->i64));
+			D_OPERATOR(C_Log("addAssign <1> %lld", to->i64));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			to->d += from->i64;
-			D_OPERATOR(Log("addAssign <2> %g", to->d));
+			D_OPERATOR(C_Log("addAssign <2> %g", to->d));
 		}
 		else
 		{
-			D_OPERATOR(Log("doAddAssign fail<1>"));
+			D_OPERATOR(C_Log("doAddAssign fail<1>"));
 			clearValue( *destination );
 			E->warning = CE_IncompatibleDataTypes;
 		}
@@ -1470,16 +1556,16 @@ void doAddAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 		if ( to->type == CTYPE_INT )
 		{
 			to->i64 += (int64_t)from->d;
-			D_OPERATOR(Log("addAssign <3> %lld", to->i64));
+			D_OPERATOR(C_Log("addAssign <3> %lld", to->i64));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			to->d += from->d;
-			D_OPERATOR(Log("addAssign <4> %g", to->i64));
+			D_OPERATOR(C_Log("addAssign <4> %g", to->i64));
 		}
 		else
 		{
-			D_OPERATOR(Log("doAddAssign fail<2>"));
+			D_OPERATOR(C_Log("doAddAssign fail<2>"));
 			clearValue( *destination );
 			E->warning = CE_IncompatibleDataTypes;
 		}
@@ -1491,18 +1577,18 @@ void doAddAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 		if ( to->type == CTYPE_STRING )
 		{
 			*to->string += *from->string;
-			D_OPERATOR(Log("addAssign <5> [%s]", to->string->c_str()));
+			D_OPERATOR(C_Log("addAssign <5> [%s]", to->string->c_str()));
 		}
 		else
 		{
-			D_OPERATOR(Log("doAddAssign fail<3> [%d]", to->type));
+			D_OPERATOR(C_Log("doAddAssign fail<3> [%d]", to->type));
 			clearValue( *destination );
 			E->warning = CE_IncompatibleDataTypes;
 		}
 	}
 	else
 	{
-		D_OPERATOR(Log("doAddAssign fail<5>"));
+		D_OPERATOR(C_Log("doAddAssign fail<5>"));
 		clearValue( *destination );
 		E->warning = CE_IncompatibleDataTypes;
 	}
@@ -1522,12 +1608,12 @@ void doSubtractAssign( Callisto_ExecutionContext* E, const int operand1, const i
 		if ( to->type == CTYPE_INT )
 		{
 			to->i64 -= from->i64;
-			D_OPERATOR(Log("subtractAssign <1> %lld", to->i64));
+			D_OPERATOR(C_Log("subtractAssign <1> %lld", to->i64));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			to->d -= from->i64;
-			D_OPERATOR(Log("subtractAssign <2> %g", to->d));
+			D_OPERATOR(C_Log("subtractAssign <2> %g", to->d));
 		}
 		else
 		{
@@ -1543,12 +1629,12 @@ void doSubtractAssign( Callisto_ExecutionContext* E, const int operand1, const i
 			to->d = d;
 			to->type32 = CTYPE_FLOAT;
 			
-			D_OPERATOR(Log("subtractAssign <3> %lld", to->i64));
+			D_OPERATOR(C_Log("subtractAssign <3> %lld", to->i64));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			to->d -= from->d;
-			D_OPERATOR(Log("subtractAssign <4> %g", to->i64));
+			D_OPERATOR(C_Log("subtractAssign <4> %g", to->i64));
 		}
 		else
 		{
@@ -1576,7 +1662,7 @@ void doModAssign( Callisto_ExecutionContext* E, const int operand1, const int op
 	if ( from->type == CTYPE_INT && to->type == CTYPE_INT )
 	{
 		to->i64 %= from->i64;
-		D_OPERATOR(Log("modAssign <1> %lld", to->i64));
+		D_OPERATOR(C_Log("modAssign <1> %lld", to->i64));
 	}
 	else
 	{
@@ -1600,12 +1686,12 @@ void doDivideAssign( Callisto_ExecutionContext* E, const int operand1, const int
 		if ( to->type == CTYPE_INT )
 		{
 			to->i64 /= from->i64;
-			D_OPERATOR(Log("divideAssign <1> %lld", to->i64));
+			D_OPERATOR(C_Log("divideAssign <1> %lld", to->i64));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			to->d /= from->i64;
-			D_OPERATOR(Log("divideAssign <2> %g", to->d));
+			D_OPERATOR(C_Log("divideAssign <2> %g", to->d));
 		}
 		else
 		{
@@ -1618,12 +1704,12 @@ void doDivideAssign( Callisto_ExecutionContext* E, const int operand1, const int
 		if ( to->type == CTYPE_INT )
 		{
 			to->i64 /= (int64_t)from->d;
-			D_OPERATOR(Log("divideAssign <3> %lld", to->i64));
+			D_OPERATOR(C_Log("divideAssign <3> %lld", to->i64));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			to->d /= from->d;
-			D_OPERATOR(Log("divideAssign <4> %g", to->i64));
+			D_OPERATOR(C_Log("divideAssign <4> %g", to->i64));
 		}
 		else
 		{
@@ -1653,12 +1739,12 @@ void doMultiplyAssign( Callisto_ExecutionContext* E, const int operand1, const i
 		if ( to->type == CTYPE_INT )
 		{
 			to->i64 *= from->i64;
-			D_OPERATOR(Log("multiplyAssign <1> %lld", to->i64));
+			D_OPERATOR(C_Log("multiplyAssign <1> %lld", to->i64));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			to->d *= from->i64;
-			D_OPERATOR(Log("multiplyAssign <2> %g", to->d));
+			D_OPERATOR(C_Log("multiplyAssign <2> %g", to->d));
 		}
 		else
 		{
@@ -1671,12 +1757,12 @@ void doMultiplyAssign( Callisto_ExecutionContext* E, const int operand1, const i
 		if ( to->type == CTYPE_INT )
 		{
 			to->i64 *= (int64_t)from->d;
-			D_OPERATOR(Log("multiplyAssign <3> %lld", to->i64));
+			D_OPERATOR(C_Log("multiplyAssign <3> %lld", to->i64));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
 			to->d *= from->d;
-			D_OPERATOR(Log("multiplyAssign <4> %g", to->i64));
+			D_OPERATOR(C_Log("multiplyAssign <4> %g", to->i64));
 		}
 		else
 		{
@@ -1703,11 +1789,7 @@ void doCompareEQ( Callisto_ExecutionContext* E, const int operand1, const int op
 
 	int result;
 
-	if ( (from->type & BIT_COMPARE_DIRECT) && (to->type & BIT_COMPARE_DIRECT) )
-	{
-		result = from->i64 == to->i64;
-	}
-	else if ( (from->type == CTYPE_NULL) || (to->type == CTYPE_NULL) )
+	if ( (from->type == CTYPE_NULL) || (to->type == CTYPE_NULL) )
 	{
 		result = from->type == to->type;
 	}
@@ -1860,7 +1942,7 @@ void doLogicalOr( Callisto_ExecutionContext* E, const int operand1, const int op
 //------------------------------------------------------------------------------
 void doMemberAccess( Callisto_ExecutionContext* E, const unsigned int key )
 {
-	D_EXECUTE(Log( "Member access of [%s]", formatSymbol(E->callisto, key).c_str()));
+	D_EXECUTE(C_Log( "Member access of [%s]", formatSymbol(E->callisto, key).c_str()));
 
 	Value* source = E->stack + (E->stackPointer - 1);
 	Value* destination = source;
@@ -1900,7 +1982,7 @@ void doMemberAccess( Callisto_ExecutionContext* E, const unsigned int key )
 		clearValueOnly( E->object );
 		valueMirror( &E->object, source );
 		
-		CLinkHash<UnitDefinition>* table = E->callisto->typeFunctions.get( source->type );
+		CCLinkHash<UnitDefinition>* table = E->callisto->typeFunctions.get( source->type );
 
 		clearValueOnly(*destination);
 
@@ -1912,7 +1994,7 @@ void doMemberAccess( Callisto_ExecutionContext* E, const unsigned int key )
 			return;
 		}
 
-		if ( !(destination->u = table->get(key)) )
+		if ( (destination->u = table->get(key)) == 0 )
 		{
 			destination->type32 = CTYPE_NULL;
 			destination->i64 = 0;
@@ -1942,7 +2024,7 @@ void doNegate( Callisto_ExecutionContext* E, const int operand )
 		clearValueOnly( *destination );
 		destination->type32 = CTYPE_INT;
 		destination->i64 = result;
-		D_OPERATOR(Log("negate<1> [%lld]", destination->i64));
+		D_OPERATOR(C_Log("negate<1> [%lld]", destination->i64));
 	}
 	else if ( value->type == CTYPE_FLOAT )
 	{
@@ -1950,7 +2032,7 @@ void doNegate( Callisto_ExecutionContext* E, const int operand )
 		clearValueOnly( *destination );
 		destination->type32 = CTYPE_FLOAT;
 		destination->d = result;
-		D_OPERATOR(Log("negate<2> [%g]", destination->d));
+		D_OPERATOR(C_Log("negate<2> [%g]", destination->d));
 	}
 	else
 	{
@@ -2042,7 +2124,7 @@ void doCoerceToString( Callisto_ExecutionContext* E, const int operand )
 
 	if ( value->type == CTYPE_INT )
 	{
-		Cstr* result = Value::m_stringPool.get();
+		C_str* result = Value::m_stringPool.get();
 		result->format( "%lld", value->i64 );
 		
 		clearValueOnly( *destination );
@@ -2051,7 +2133,7 @@ void doCoerceToString( Callisto_ExecutionContext* E, const int operand )
 	}
 	else if ( value->type == CTYPE_FLOAT )
 	{
-		Cstr* result = Value::m_stringPool.get();
+		C_str* result = Value::m_stringPool.get();
 		result->format( "%g", value->d );
 		
 		clearValueOnly( *destination );
@@ -2093,7 +2175,7 @@ void doSwitch( Callisto_ExecutionContext* E, const char** T )
 		jumpTable += 4;
 	}
 
-	hash = htobe64( value->getHash() );
+	hash = htonll( value->getHash() );
 	popOne( E );
 
 	for( unsigned int c = 0; c<cases; ++c, jumpTable += 12 )
@@ -2134,7 +2216,7 @@ void doPushIterator( Callisto_ExecutionContext* E )
 	{
 		case CTYPE_STRING:
 		{
-			Cstr* string;
+			C_str* string;
 			Value::m_stringPool.getReference( string = value->string );
 			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING_ITERATOR;
@@ -2146,7 +2228,7 @@ void doPushIterator( Callisto_ExecutionContext* E )
 
 		case CTYPE_TABLE:
 		{
-			CLinkHash<CKeyValue>* tableSpace;
+			CCLinkHash<CKeyValue>* tableSpace;
 			Value::m_tableSpacePool.getReference( tableSpace = value->tableSpace );
 			clearValueOnly( *destination );
 			destination->type32 = CTYPE_TABLE_ITERATOR;
@@ -2203,7 +2285,7 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 		}
 		else if ( to->type == CTYPE_STRING )
 		{
-			Cstr* result = Value::m_stringPool.get();
+			C_str* result = Value::m_stringPool.get();
 			result->format( "%s%lld", to->string->c_str(), from->i64 );
 			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING;
@@ -2233,7 +2315,7 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 		}
 		else if ( to->type == CTYPE_STRING )
 		{
-			Cstr* result = Value::m_stringPool.get();
+			C_str* result = Value::m_stringPool.get();
 			result->format( "%s%g", to->string->c_str(), from->d );
 			clearValueOnly( *destination );
 			destination->type32 = CTYPE_STRING;
@@ -2249,7 +2331,7 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 	{
 		if ( to->type == CTYPE_STRING )
 		{
-			Cstr* result = Value::m_stringPool.get();
+			C_str* result = Value::m_stringPool.get();
 			*result = *to->string + *from->string;
 
 			clearValueOnly( *destination );
@@ -2258,7 +2340,7 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 		}
 		else if ( to->type32 == CTYPE_INT )
 		{
-			Cstr* result = Value::m_stringPool.get();
+			C_str* result = Value::m_stringPool.get();
 			result->format( "%lld%s", to->i64, from->string->c_str() );
 
 			clearValueOnly( *destination );
@@ -2267,7 +2349,7 @@ void doBinaryAddition( Callisto_ExecutionContext* E, const int operand1, const i
 		}
 		else if ( to->type32 == CTYPE_FLOAT )
 		{
-			Cstr* result = Value::m_stringPool.get();
+			C_str* result = Value::m_stringPool.get();
 			result->format( "%g%s", to->d, from->string->c_str() );
 
 			clearValueOnly( *destination );
@@ -2366,7 +2448,7 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 			clearValueOnly( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = result;
-			D_OPERATOR(Log("doBinaryMultiplication<1> [%lld]", result));
+			D_OPERATOR(C_Log("doBinaryMultiplication<1> [%lld]", result));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
@@ -2374,7 +2456,7 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
-			D_OPERATOR(Log("doBinaryMultiplication<2> [%g]", result));
+			D_OPERATOR(C_Log("doBinaryMultiplication<2> [%g]", result));
 		}
 		else
 		{
@@ -2390,7 +2472,7 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
-			D_OPERATOR(Log("doBinaryMultiplication<3> [%g]", result));
+			D_OPERATOR(C_Log("doBinaryMultiplication<3> [%g]", result));
 		}
 		else if ( to->type == CTYPE_FLOAT )
 		{
@@ -2398,7 +2480,7 @@ void doBinaryMultiplication( Callisto_ExecutionContext* E, const int operand1, c
 			clearValueOnly( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
-			D_OPERATOR(Log("doBinaryMultiplication<4> [%g]", result));
+			D_OPERATOR(C_Log("doBinaryMultiplication<4> [%g]", result));
 		}
 		else
 		{
@@ -2744,9 +2826,9 @@ void addTableElement( Callisto_ExecutionContext* E )
 	Value* key = getStackValue( E, 2 );
 	Value* table = getStackValue( E, 3 );
 
-	D_ADD_TABLE_ELEMENT(Log("Stack before---------"));
+	D_ADD_TABLE_ELEMENT(C_Log("Stack before---------"));
 	D_ADD_TABLE_ELEMENT(dumpStack(E));
-	D_ADD_TABLE_ELEMENT(Log("---------------------"));
+	D_ADD_TABLE_ELEMENT(C_Log("---------------------"));
 	
 	if ( !(key->type & BIT_CAN_HASH) )
 	{
@@ -2776,9 +2858,9 @@ void addTableElement( Callisto_ExecutionContext* E )
 		valueMirror( &KV->value, value );
 		valueMirror( &KV->key, key );
 
-		D_ADD_TABLE_ELEMENT(Log("Stack after----------"));
+		D_ADD_TABLE_ELEMENT(C_Log("Stack after----------"));
 		D_ADD_TABLE_ELEMENT(dumpStack(E));
-		D_ADD_TABLE_ELEMENT(Log("---------------------"));
+		D_ADD_TABLE_ELEMENT(C_Log("---------------------"));
 	}
 	
 	popOne( E );
@@ -2788,9 +2870,9 @@ void addTableElement( Callisto_ExecutionContext* E )
 //------------------------------------------------------------------------------
 void dereferenceFromTable( Callisto_ExecutionContext* E )
 {
-	D_DEREFERENCE(Log("Derefernece stack IN--------"));
+	D_DEREFERENCE(C_Log("Derefernece stack IN--------"));
 	D_DEREFERENCE(dumpStack(E));
-	D_DEREFERENCE(Log("----------------------------"));
+	D_DEREFERENCE(C_Log("----------------------------"));
 	
 	Value* key = getStackValue( E, 1 );
 	Value* table = getStackValue( E, 2 );
@@ -2799,7 +2881,7 @@ void dereferenceFromTable( Callisto_ExecutionContext* E )
 	// if it's not a table, make it one, dereferencing it morphs it
 	if ( (table->type != CTYPE_ARRAY) && (table->type != CTYPE_TABLE) )
 	{
-		D_DEREFERENCE(Log("trying to dereference a non table/array"));
+		D_DEREFERENCE(C_Log("trying to dereference a non table/array"));
 		popOne(E);
 		return;
 	}
@@ -2847,13 +2929,40 @@ void dereferenceFromTable( Callisto_ExecutionContext* E )
 
 	popOne( E );
 
-	D_DEREFERENCE(Log("Derefrence stack OUT-------"));
+	D_DEREFERENCE(C_Log("Derefrence stack OUT-------"));
 	D_DEREFERENCE(dumpStack(E));
-	D_DEREFERENCE(Log("----------------------------"));
+	D_DEREFERENCE(C_Log("----------------------------"));
 }
 
 //------------------------------------------------------------------------------
-bool isValidLabel( Cstr& token, bool doubleColonOkay )
+Callisto_ExecutionContext* doCreateThreadFromUnit( Callisto_Context* C, UnitDefinition* unit, const int args  )
+{
+	Callisto_ExecutionContext* newExec = getExecutionContext( C );
+
+	for( int i=0; i<args; ++i )
+	{
+		getNextStackEntry( newExec ); // allocate space for arguments
+	}
+	
+	Value* V = getNextStackEntry( newExec ); // create a call-frame
+
+	V->frame = newExec->frame;
+	V->type32 = CTYPE_FRAME;
+
+	V->frame->unitContainer.u = unit;
+	V->frame->unitContainer.type32 = CTYPE_UNIT;
+	Value::m_unitSpacePool.release( V->frame->unitContainer.unitSpace );
+	V->frame->unitContainer.unitSpace = Value::m_unitSpacePool.get();
+	V->frame->returnVector = 0;
+	V->frame->numberOfArguments = args;
+
+	newExec->textOffsetToResume = unit->textOffset;
+
+	return newExec;
+}
+
+//------------------------------------------------------------------------------
+bool isValidLabel( C_str& token, bool doubleColonOkay )
 {
 	if ( !token.size() || (!isalpha(token[0]) && token[0] != '_') ) // non-zero size and start with alpha or '_' ?
 	{
@@ -2894,11 +3003,11 @@ void dumpStack( Callisto_ExecutionContext* E )
 	{
 		if ( E->stack[i].type == CTYPE_REFERENCE )
 		{
-			D_DUMPSTACK(Log( "%d: [ref]->%s [%s]\n", i, formatType(E->stack[i].v->type).c_str(), formatValue(*E->stack[i].v).c_str() ));
+			D_DUMPSTACK(C_Log( "%d: [ref]->%s [%s]\n", i, formatType(E->stack[i].v->type).c_str(), formatValue(*E->stack[i].v).c_str() ));
 		}
 		else
 		{
-			D_DUMPSTACK(Log( "%d: %s [%s]\n", i,  formatType(E->stack[i].type).c_str(), formatValue(E->stack[i]).c_str() ));
+			D_DUMPSTACK(C_Log( "%d: %s [%s]\n", i,  formatType(E->stack[i].type).c_str(), formatValue(E->stack[i]).c_str() ));
 		}
 	}
 }
@@ -2906,16 +3015,18 @@ void dumpStack( Callisto_ExecutionContext* E )
 //------------------------------------------------------------------------------
 void dumpSymbols( Callisto_Context* C )
 {
-	CLinkHash<Value>::Iterator iter( *C->globalNameSpace );
+	CCLinkHash<Value>::Iterator iter( *C->globalNameSpace );
 	for( Value* V = iter.getFirst(); V; V = iter.getNext() )
 	{
 		if ( V->type == CTYPE_REFERENCE )
 		{
-			D_DUMPSTACK(Log( "%p->%p: %d:[%s]\n", V, V->v, V->v->type, formatValue(*V->v).c_str() ));
+			D_DUMPSTACK(C_Log( "%p->%p: %d:[%s]\n", V, V->v, V->v->type, formatValue(*V->v).c_str() ));
 		}
 		else
 		{
-			D_DUMPSTACK(Log( "%p: %d:[%s]\n", V, V->type, formatValue(*V).c_str() ));
+			D_DUMPSTACK(C_Log( "%p: %d:[%s]\n", V, V->type, formatValue(*V).c_str() ));
 		}
 	}
+}
+
 }

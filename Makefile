@@ -24,30 +24,32 @@ ETEST = \
 	lib/libmincallisto.a \
 
 LOBJS = \
-	$(OBJDIR)/event.o \
 	$(OBJDIR)/api.o \
 	$(OBJDIR)/vm.o \
-	$(OBJDIR)/token.o \
+	$(OBJDIR)/c_token.o \
 	$(OBJDIR)/cc.o \
 	$(OBJDIR)/value.o \
 	$(OBJDIR)/callisto_stdlib.o \
 	$(OBJDIR)/callisto_string.o \
+	$(OBJDIR)/callisto_system.o \
 	$(OBJDIR)/callisto_math.o \
 	$(OBJDIR)/callisto_file.o \
 	$(OBJDIR)/callisto_json.o \
 	$(OBJDIR)/callisto_iterators.o \
+	$(OBJDIR)/callisto_linux.o \
 
 EOBJS = \
 	$(OBJDIR)/api.o \
-	$(OBJDIR)/event.o \
 	$(OBJDIR)/vm.o \
 	$(OBJDIR)/value.o \
 	$(OBJDIR)/callisto_stdlib.o \
 	$(OBJDIR)/callisto_string.o \
+	$(OBJDIR)/callisto_system.o \
 	$(OBJDIR)/callisto_math.o \
 	$(OBJDIR)/callisto_file.o \
 	$(OBJDIR)/callisto_json.o \
 	$(OBJDIR)/callisto_iterators.o \
+	$(OBJDIR)/callisto_linux.o \
 
 clean:
 	-@rm -rf $(OBJDIR)
@@ -87,7 +89,7 @@ $(OBJDIR)/event.o: source/event.cpp
 $(OBJDIR)/vm.o: source/vm.cpp
 	$(CC) $@ $<
 
-$(OBJDIR)/token.o: source/token.cpp
+$(OBJDIR)/c_token.o: source/c_token.cpp
 	$(CC) $@ $<
 
 $(OBJDIR)/api.o: source/api.cpp
@@ -117,6 +119,12 @@ $(OBJDIR)/callisto_file.o: source/callisto_file.cpp
 $(OBJDIR)/callisto_json.o: source/callisto_json.cpp
 	$(CC) $@ $<
 
+$(OBJDIR)/callisto_linux.o: source/callisto_linux.cpp
+	$(CC) $@ $<
+
 $(OBJDIR)/callisto_iterators.o: source/callisto_iterators.cpp
+	$(CC) $@ $<
+
+$(OBJDIR)/callisto_system.o: source/callisto_system.cpp
 	$(CC) $@ $<
 

@@ -1,8 +1,11 @@
-#ifndef ARRAY_H
-#define ARRAY_H
+#ifndef CALLISTO_ARRAY_H
+#define CALLISTO_ARRAY_H
 /*------------------------------------------------------------------------------*/
 
 #include <memory.h>
+
+namespace Callisto
+{
 
 //-----------------------------------------------------------------------------
 template <class A> class Carray
@@ -113,5 +116,7 @@ private:
 	unsigned int m_count;
 	void (*m_clear)( A& item );
 };
+
+}
 
 #endif

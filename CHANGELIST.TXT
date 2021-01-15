@@ -1,3 +1,10 @@
+v0.3.0 -----------------------------------------------
+- Finnaly figured out how I want to do threading and implemented that
+  might change as it gets used but for a first pass I'm happy
+- Lots of Valgrind to make sure everything is safe
+- Added OS-specifics for sleep, event and threading
+- added some more tests
+
 v0.2.0 -----------------------------------------------
 - LOADS of changes. More or less a complete re-write of the API and VM.
   The previous version was "wow it works! woohoo!". Now it's time to make

@@ -1,6 +1,6 @@
-#include "../include/callisto.h"
+#include "callisto.h"
 #include "vm.h"
-#include "json_parser.h"
+#include "c_json_parser.h"
 
 // todo..
 
@@ -8,7 +8,7 @@
 Callisto_Handle static_jsonImport( Callisto_ExecutionContext* E )
 {
 	const Value* var = (E->Args->type == CTYPE_REFERENCE) ? E->Args->v : E->Args;
-	JsonValue json;
+	CCJsonValue json;
 	
 	if ( var->type == CTYPE_STRING )
 	{

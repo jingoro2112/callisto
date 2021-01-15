@@ -1,5 +1,5 @@
-#ifndef STR_HPP
-#define STR_HPP
+#ifndef CALLISTO_STR_H
+#define CALLISTO_STR_H
 /* ------------------------------------------------------------------------- */
 
 #if defined(_WIN32) && !defined(__MINGW32__)
@@ -16,39 +16,42 @@
 #include <wchar.h>
 #include <assert.h>
 
+namespace Callisto
+{
+
 /*
 
  - No default dynamic representation. Put a C/W/Tstr on the stack without
  sweating what the constructor will go off and do. Until the
  string gets larger than this, after which heap load must be imposed: */
-const unsigned int c_sizeofBaseString = 31;
+const unsigned int c_csizeofBaseString = 31;
 
-const int c_cstrFormatBufferSize = 32000;
+const int c_ccstrFormatBufferSize = 32000;
 
 //-----------------------------------------------------------------------------
-template<class C> class Tstr
+template<class C> class CTstr
 {
 public:
-	Tstr<C>() { m_len = 0; m_smallbuf[0] = 0; m_str = m_smallbuf; m_buflen = c_sizeofBaseString; }
-	Tstr<C>( const Tstr<C>& str) { m_len = 0; m_str = m_smallbuf; m_buflen = c_sizeofBaseString; set(str, str.size()); } 
-	Tstr<C>( const C* s, const unsigned int len =-1 ) { m_len = 0; m_str = m_smallbuf; m_buflen = c_sizeofBaseString; set(s, len); }
-	Tstr<C>( const C c) { m_len = 1; m_str = m_smallbuf; m_smallbuf[0] = c; m_smallbuf[1] = 0; m_buflen = c_sizeofBaseString; } 
-	Tstr<C>( const int len ) { alloc(len); }
-	Tstr<C>( const unsigned int len ) { alloc(len); }
-	~Tstr<C>() { if ( m_str != m_smallbuf ) delete[] m_str; }
+	CTstr<C>() { m_len = 0; m_smallbuf[0] = 0; m_str = m_smallbuf; m_buflen = c_csizeofBaseString; }
+	CTstr<C>( const CTstr<C>& str) { m_len = 0; m_str = m_smallbuf; m_buflen = c_csizeofBaseString; set(str, str.size()); } 
+	CTstr<C>( const C* s, const unsigned int len =-1 ) { m_len = 0; m_str = m_smallbuf; m_buflen = c_csizeofBaseString; set(s, len); }
+	CTstr<C>( const C c) { m_len = 1; m_str = m_smallbuf; m_smallbuf[0] = c; m_smallbuf[1] = 0; m_buflen = c_csizeofBaseString; } 
+	CTstr<C>( const int len ) { alloc(len); }
+	CTstr<C>( const unsigned int len ) { alloc(len); }
+	~CTstr<C>() { if ( m_str != m_smallbuf ) delete[] m_str; }
 
-	inline Tstr<C>& clear( const bool deleteMem =false ) { if ( deleteMem ) { release(); } else { m_len = 0; m_str[0] = 0; } return *this; }
+	inline CTstr<C>& clear( const bool deleteMem =false ) { if ( deleteMem ) { release(); } else { m_len = 0; m_str[0] = 0; } return *this; }
 
 	// sets this string to be the size requested, regardless of contents
-	Tstr<C>& setSize( const unsigned int size, const bool preserveContents =true, const bool zeroFill =false ) { alloc(size, preserveContents, zeroFill); m_len = size; m_str[size] = 0; return *this; }
+	CTstr<C>& setSize( const unsigned int size, const bool preserveContents =true, const bool zeroFill =false ) { alloc(size, preserveContents, zeroFill); m_len = size; m_str[size] = 0; return *this; }
 	
-	inline Tstr<C>& alloc( const unsigned int characters, const bool preserveContents =true, const bool zeroFill =false ); 
+	inline CTstr<C>& alloc( const unsigned int characters, const bool preserveContents =true, const bool zeroFill =false ); 
 
 	unsigned int size() const { return m_len; } // see length
 	unsigned int length() const { return m_len; } // see size
 	unsigned int sizeInCore() const { return m_len*sizeof(C); } // how many bytes this class takes up
 
-	inline Tstr<C>& giveOwnership( C* dynamicMemory, const unsigned int bufferlen ); // give this class ownership of some dynamic memory
+	inline CTstr<C>& giveOwnership( C* dynamicMemory, const unsigned int bufferlen ); // give this class ownership of some dynamic memory
 	inline unsigned int release( C** toBuf =0 ); // release the internal buffer, return value must be manually delete[]ed !!
 
 	const C* c_str( const unsigned int offset =0 ) const { assert(offset <= m_len); return m_str + offset; }
@@ -61,39 +64,39 @@ public:
 	inline bool fileToBuffer( const char* fileName, const bool appendToBuffer =false );
 	inline bool bufferToFile( const char* fileName, const bool append =false ) const;
 
-	inline Tstr<C>& set( const C* buf, const unsigned int len =(unsigned int)-1 ) { m_len = 0; m_str[0] = 0; return insert( buf, len ); }
-	Tstr<C>& set( const Tstr& str ) { return set( str.m_str, str.m_len ); }
+	inline CTstr<C>& set( const C* buf, const unsigned int len =(unsigned int)-1 ) { m_len = 0; m_str[0] = 0; return insert( buf, len ); }
+	CTstr<C>& set( const CTstr& str ) { return set( str.m_str, str.m_len ); }
 
-	inline Tstr<C>& trim();
-	inline Tstr<C>& ltrim();
-	inline Tstr<C>& rtrim();
-	inline Tstr<C>& truncate( const unsigned int newLen ); // reduce size to 'newlen'
-	Tstr<C>& shave( const unsigned int e ) { return (e > m_len) ? clear() : truncate(m_len - e); } // remove 'x' trailing characters
+	inline CTstr<C>& trim();
+	inline CTstr<C>& ltrim();
+	inline CTstr<C>& rtrim();
+	inline CTstr<C>& truncate( const unsigned int newLen ); // reduce size to 'newlen'
+	CTstr<C>& shave( const unsigned int e ) { return (e > m_len) ? clear() : truncate(m_len - e); } // remove 'x' trailing characters
 
-	inline Tstr<C> subStr( const unsigned int from, const unsigned int to ) const;
+	inline CTstr<C> subStr( const unsigned int from, const unsigned int to ) const;
 
 	// memmove from sourcePosition to end of string down to the start of the string
-	inline Tstr<C>& shift( const unsigned int fromSourcePosition, const unsigned int toTargetPos =0 );
-	inline unsigned int dequeue( const unsigned int bytes, Tstr *str =0 ); // returns characters actually dequeued (may be zero)
+	inline CTstr<C>& shift( const unsigned int fromSourcePosition, const unsigned int toTargetPos =0 );
+	inline unsigned int dequeue( const unsigned int bytes, CTstr *str =0 ); // returns characters actually dequeued (may be zero)
 
-	inline Tstr<C>& escape( const C* chars, Tstr<C>* target =0, const C escapeCharacter ='\\' );
-	inline Tstr<C>& unescape( const C escapeCharacter ='\\' );
+	inline CTstr<C>& escape( const C* chars, CTstr<C>* target =0, const C escapeCharacter ='\\' );
+	inline CTstr<C>& unescape( const C escapeCharacter ='\\' );
 
 	inline unsigned int replace( const C* oldstr, const C* newstr, const bool ignoreCase =false, const int occurances =0 );
 
 	inline bool isMatch( const C* buf, const bool matchCase =true, const bool matchPartial =false ) const;
 
-	inline Tstr<C>& toLower() { for( unsigned int i=0; i<m_len; i++ ) { m_str[i] = (C)tolower((char)m_str[i]); } return *this; }
-	inline Tstr<C>& toUpper() { for( unsigned int i=0; i<m_len; i++ ) { m_str[i] = (C)toupper((char)m_str[i]); } return *this; }
+	inline CTstr<C>& toLower() { for( unsigned int i=0; i<m_len; i++ ) { m_str[i] = (C)tolower((char)m_str[i]); } return *this; }
+	inline CTstr<C>& toUpper() { for( unsigned int i=0; i<m_len; i++ ) { m_str[i] = (C)toupper((char)m_str[i]); } return *this; }
 
 	inline const C* find( const C* buf, const bool matchCase =true ) const;
 
-	inline Tstr<C>& insert( const C* buf, const unsigned int len =(unsigned int)-1, const unsigned int startPos =0 );
-	inline Tstr<C>& insert( const Tstr<C>& s, const unsigned int startPos =0 ) { return insert(s.m_str, s.m_len, startPos); }
+	inline CTstr<C>& insert( const C* buf, const unsigned int len =(unsigned int)-1, const unsigned int startPos =0 );
+	inline CTstr<C>& insert( const CTstr<C>& s, const unsigned int startPos =0 ) { return insert(s.m_str, s.m_len, startPos); }
 	
-	inline Tstr<C>& append( const C* buf, const unsigned int len =(unsigned int)-1 ) { return insert(buf, len, m_len); } 
-	inline Tstr<C>& append( const C c );
-	inline Tstr<C>& append( const Tstr<C>& s ) { return insert(s.m_str, s.m_len, m_len); }
+	inline CTstr<C>& append( const C* buf, const unsigned int len =(unsigned int)-1 ) { return insert(buf, len, m_len); } 
+	inline CTstr<C>& append( const C c );
+	inline CTstr<C>& append( const CTstr<C>& s ) { return insert(s.m_str, s.m_len, m_len); }
 	inline C* addTail() { alloc(m_len += 1); return m_str + (m_len - 1); }
 	inline C* addHead() { alloc(m_len += 1); memmove(m_str + 1, m_str, (m_len - 1)*sizeof(C)); return m_str; }
 
@@ -104,36 +107,36 @@ public:
 	C& operator[]( const int l ) { assert(m_len && ((unsigned int)l < m_len)); return m_str[l]; }
 	C& operator[]( const unsigned int l ) { assert(m_len && (l < m_len)); return m_str[l]; }
 
-	Tstr<C>& operator += ( const Tstr<C>& str ) { return append(str.m_str, str.m_len); }
-	Tstr<C>& operator += ( const C* s ) { return append(s); }
-	Tstr<C>& operator += ( const C c ) { return append(c); }
+	CTstr<C>& operator += ( const CTstr<C>& str ) { return append(str.m_str, str.m_len); }
+	CTstr<C>& operator += ( const C* s ) { return append(s); }
+	CTstr<C>& operator += ( const C c ) { return append(c); }
 
-	Tstr<C>& operator = ( const Tstr<C>& str ) { if ( &str != this ) set(str, str.size()); return *this; }
-	Tstr<C>& operator = ( const Tstr<C>* str ) { if ( !str ) { clear(); } else if ( this != this ) { set(*str, str->size()); } return *this; }
-	Tstr<C>& operator = ( const C* c ) { set(c); return *this; }
-	Tstr<C>& operator = ( const C c ) { set(c); return *this; }
+	CTstr<C>& operator = ( const CTstr<C>& str ) { if ( &str != this ) set(str, str.size()); return *this; }
+	CTstr<C>& operator = ( const CTstr<C>* str ) { if ( !str ) { clear(); } else if ( this != this ) { set(*str, str->size()); } return *this; }
+	CTstr<C>& operator = ( const C* c ) { set(c); return *this; }
+	CTstr<C>& operator = ( const C c ) { set(c); return *this; }
 
-	friend bool operator != ( const Tstr<C>& s1, const Tstr<C>& s2 ) { return s1.m_len != s2.m_len || (memcmp(s1.m_str, s2.m_str, s1.m_len*sizeof(C)) != 0); }
-	friend bool operator != ( const Tstr<C>& s, const C* z ) { return !s.isMatch( z ); }
-	friend bool operator != ( const C* z, const Tstr<C>& s ) { return !s.isMatch( z ); }
-	friend bool operator == ( const Tstr<C>& s1, const Tstr<C>& s2 ) { return s1.m_len == s2.m_len && (memcmp(s1.m_str, s2.m_str, s1.m_len*sizeof(C)) == 0); }
-	friend bool operator == ( const C* z, const Tstr<C>& s ) { return s.isMatch( z ); }
-	friend bool operator == ( const Tstr<C>& s, const C* z ) { return s.isMatch( z ); }
+	friend bool operator != ( const CTstr<C>& s1, const CTstr<C>& s2 ) { return s1.m_len != s2.m_len || (memcmp(s1.m_str, s2.m_str, s1.m_len*sizeof(C)) != 0); }
+	friend bool operator != ( const CTstr<C>& s, const C* z ) { return !s.isMatch( z ); }
+	friend bool operator != ( const C* z, const CTstr<C>& s ) { return !s.isMatch( z ); }
+	friend bool operator == ( const CTstr<C>& s1, const CTstr<C>& s2 ) { return s1.m_len == s2.m_len && (memcmp(s1.m_str, s2.m_str, s1.m_len*sizeof(C)) == 0); }
+	friend bool operator == ( const C* z, const CTstr<C>& s ) { return s.isMatch( z ); }
+	friend bool operator == ( const CTstr<C>& s, const C* z ) { return s.isMatch( z ); }
 
-	friend Tstr<C> operator + ( const Tstr<C>& str, const C* s) { Tstr<C> T(str); T += s; return T; }
-	friend Tstr<C> operator + ( const Tstr<C>& str, const C c) { Tstr<C> T(str); T += c; return T; }
-	friend Tstr<C> operator + ( const C* s, const Tstr<C>& str ) { Tstr<C> T(s); T += str; return T; }
-	friend Tstr<C> operator + ( const C c, const Tstr<C>& str ) { Tstr<C> T(c); T += str; return T; }
-	friend Tstr<C> operator + ( const Tstr<C>& str1, const Tstr<C>& str2 ) { Tstr<C> T(str1); T += str2; return T; }
+	friend CTstr<C> operator + ( const CTstr<C>& str, const C* s) { CTstr<C> T(str); T += s; return T; }
+	friend CTstr<C> operator + ( const CTstr<C>& str, const C c) { CTstr<C> T(str); T += c; return T; }
+	friend CTstr<C> operator + ( const C* s, const CTstr<C>& str ) { CTstr<C> T(s); T += str; return T; }
+	friend CTstr<C> operator + ( const C c, const CTstr<C>& str ) { CTstr<C> T(c); T += str; return T; }
+	friend CTstr<C> operator + ( const CTstr<C>& str1, const CTstr<C>& str2 ) { CTstr<C> T(str1); T += str2; return T; }
 
 	class Iterator
 	{
 	public:
-		Iterator( Tstr<C> const& S ) : m_S(&S), m_i(0) {}
+		Iterator( CTstr<C> const& S ) : m_S(&S), m_i(0) {}
 		bool operator!=( const Iterator& other ) { return m_i != other.m_i; }
 		C& operator* () const { return m_S->m_str[m_i]; }
 		const Iterator operator++() { m_i++; return *this; }
-		Tstr<C> const* m_S;
+		CTstr<C> const* m_S;
 		int m_i;
 	};
 
@@ -148,84 +151,84 @@ protected:
 	
 	unsigned int m_buflen; // how long the buffer itself is
 	unsigned int m_len; // how long the string is in the buffer
-	C m_smallbuf[ c_sizeofBaseString + 1 ]; // small temporary buffer so a new/delete is not imposed for small strings
+	C m_smallbuf[ c_csizeofBaseString + 1 ]; // small temporary buffer so a new/delete is not imposed for small strings
 };
 
 //------------------------------------------------------------------------------
-class Cstr : public Tstr<char>
+class C_str : public CTstr<char>
 {
 public:
-	Cstr() {}
-	Cstr( const Cstr* str ) { set(str ? *str : ""); }
-	Cstr( const wchar_t* buf ) { *this = buf; }
-	Cstr( const char* buf, const unsigned int len =(unsigned int)-1 ) : Tstr<char>(buf, len) {}
-	Cstr( const char c ) : Tstr<char>(c) {}
+	C_str() {}
+	C_str( const C_str* str ) { set(str ? *str : ""); }
+	C_str( const wchar_t* buf ) { *this = buf; }
+	C_str( const char* buf, const unsigned int len =(unsigned int)-1 ) : CTstr<char>(buf, len) {}
+	C_str( const char c ) : CTstr<char>(c) {}
 
-	Cstr& operator = ( const wchar_t* s ) { if (s && (m_len = (unsigned int)wcstombs(0, s, 0)) != (unsigned int)-1) wcstombs( alloc((unsigned int)m_len + 1, false).p_str(), s, m_len + 1 ); else clear(); return *this; }
-	Cstr& operator = ( const char* c ) { set(c); return *this; }
+	C_str& operator = ( const wchar_t* s ) { if (s && (m_len = (unsigned int)wcstombs(0, s, 0)) != (unsigned int)-1) wcstombs( alloc((unsigned int)m_len + 1, false).p_str(), s, m_len + 1 ); else clear(); return *this; }
+	C_str& operator = ( const char* c ) { set(c); return *this; }
 
-	static Cstr sprintf( const char* format, ... ) { Cstr T; va_list arg; va_start(arg, format); T.formatVA(format, arg); va_end(arg); return T; }
+	static C_str sprintf( const char* format, ... ) { C_str T; va_list arg; va_start(arg, format); T.formatVA(format, arg); va_end(arg); return T; }
 		
-	Cstr& format( const char* format, ... ) { va_list arg; va_start( arg, format ); clear(); appendFormatVA( format, arg ); va_end( arg ); return *this; }
-	Cstr& formatVA( const char* format, va_list arg ) { clear(); return appendFormatVA(format, arg); }
-	Cstr& appendFormat( const char* format, ... ) { va_list arg; va_start( arg, format ); appendFormatVA( format, arg ); va_end( arg ); return *this; }
-	Cstr& appendFormatVA( const char* format, va_list arg )
+	C_str& format( const char* format, ... ) { va_list arg; va_start( arg, format ); clear(); appendFormatVA( format, arg ); va_end( arg ); return *this; }
+	C_str& formatVA( const char* format, va_list arg ) { clear(); return appendFormatVA(format, arg); }
+	C_str& appendFormat( const char* format, ... ) { va_list arg; va_start( arg, format ); appendFormatVA( format, arg ); va_end( arg ); return *this; }
+	C_str& appendFormatVA( const char* format, va_list arg )
 	{
-		char buf[c_cstrFormatBufferSize + 1];
-		int len = vsnprintf( buf, c_cstrFormatBufferSize, format, arg );
+		char buf[c_ccstrFormatBufferSize + 1];
+		int len = vsnprintf( buf, c_ccstrFormatBufferSize, format, arg );
 		if ( len > 0 ) insert( buf, (unsigned int)len, m_len );
 		return *this;
 	}
 };
 
 //------------------------------------------------------------------------------
-class Wstr : public Tstr<wchar_t>
+class W_str : public CTstr<wchar_t>
 {
 public:
-	Wstr() {}
-	Wstr( const Wstr* str ) { set(str ? *str : L""); }
-	Wstr( const char* buf )	{ *this = buf; }
-	Wstr( const unsigned char* buf ) { *this = (char*)buf; }
-	Wstr( const wchar_t* buf, const unsigned int len =(unsigned int)-1 ) : Tstr<wchar_t>(buf, len) {}
-	Wstr( const wchar_t w ) : Tstr<wchar_t>(w) {}
+	W_str() {}
+	W_str( const W_str* str ) { set(str ? *str : L""); }
+	W_str( const char* buf )	{ *this = buf; }
+	W_str( const unsigned char* buf ) { *this = (char*)buf; }
+	W_str( const wchar_t* buf, const unsigned int len =(unsigned int)-1 ) : CTstr<wchar_t>(buf, len) {}
+	W_str( const wchar_t w ) : CTstr<wchar_t>(w) {}
 
-	Wstr& operator = ( const char* s ) { if ( s && (m_len = (unsigned int)mbstowcs(0, s, 0)) != (unsigned int)-1 ) mbstowcs( alloc((unsigned int)m_len + 1, false).p_str(), s, m_len + 1 ); else clear(); return *this; }
-	Wstr& operator = ( const wchar_t* w ) { set(w); return *this; }
+	W_str& operator = ( const char* s ) { if ( s && (m_len = (unsigned int)mbstowcs(0, s, 0)) != (unsigned int)-1 ) mbstowcs( alloc((unsigned int)m_len + 1, false).p_str(), s, m_len + 1 ); else clear(); return *this; }
+	W_str& operator = ( const wchar_t* w ) { set(w); return *this; }
 
-	static Wstr sprintf( const wchar_t* format, ... ) { Wstr T; va_list arg; va_start(arg, format); T.formatVA(format, arg); va_end(arg); return T; }
+	static W_str sprintf( const wchar_t* format, ... ) { W_str T; va_list arg; va_start(arg, format); T.formatVA(format, arg); va_end(arg); return T; }
 
-	Wstr& format( const wchar_t* format, ... ) { va_list arg; va_start( arg, format ); clear(); appendFormatVA( format, arg ); va_end( arg ); return *this; }
-	Wstr& formatVA( const wchar_t* format, va_list arg ) { clear(); return appendFormatVA(format, arg); }
-	Wstr& appendFormat( const wchar_t* format, ... ) { va_list arg; va_start( arg, format ); appendFormatVA( format, arg ); va_end( arg ); return *this; }
-	Wstr& appendFormatVA( const wchar_t* format, va_list arg )
+	W_str& format( const wchar_t* format, ... ) { va_list arg; va_start( arg, format ); clear(); appendFormatVA( format, arg ); va_end( arg ); return *this; }
+	W_str& formatVA( const wchar_t* format, va_list arg ) { clear(); return appendFormatVA(format, arg); }
+	W_str& appendFormat( const wchar_t* format, ... ) { va_list arg; va_start( arg, format ); appendFormatVA( format, arg ); va_end( arg ); return *this; }
+	W_str& appendFormatVA( const wchar_t* format, va_list arg )
 	{
-		wchar_t buf[c_cstrFormatBufferSize + 1];
-		int len = vswprintf( buf, c_cstrFormatBufferSize, format, arg );
+		wchar_t buf[c_ccstrFormatBufferSize + 1];
+		int len = vswprintf( buf, c_ccstrFormatBufferSize, format, arg );
 		if ( len > 0 ) insert( buf, (unsigned int)len, m_len );
 		return *this;
 	}
 };
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::alloc( const unsigned int characters,
+template<class C> CTstr<C>& CTstr<C>::alloc( const unsigned int characters,
 										   const bool preserveContents,
 										   const bool zeroFill /*=false*/ )
 {
 	if ( characters >= m_buflen ) // only need to alloc if more space is requested than we have
 	{
-		C* newStr = new C[ characters + 1 ]; // create the space
+		C* neW_str = new C[ characters + 1 ]; // create the space
 		if ( zeroFill )
 		{
-			memset( newStr + (m_buflen*sizeof(C)), 0, ((characters*sizeof(C)) + sizeof(C)) - (m_buflen*sizeof(C)) );
+			memset( neW_str + (m_buflen*sizeof(C)), 0, ((characters*sizeof(C)) + sizeof(C)) - (m_buflen*sizeof(C)) );
 		}
 		else
 		{
-			newStr[characters] = 0;
+			neW_str[characters] = 0;
 		}
 		
 		if ( preserveContents ) 
 		{
-			memcpy( newStr, m_str, m_buflen * sizeof(C) ); // preserve whatever we had
+			memcpy( neW_str, m_str, m_buflen * sizeof(C) ); // preserve whatever we had
 		}
 		
 		if ( m_str != m_smallbuf )
@@ -233,7 +236,7 @@ template<class C> Tstr<C>& Tstr<C>::alloc( const unsigned int characters,
 			delete[] m_str;
 		}
 		
-		m_str = newStr;
+		m_str = neW_str;
 		m_buflen = characters;		
 	}
 	else if ( zeroFill && (m_str == m_smallbuf) )
@@ -245,9 +248,9 @@ template<class C> Tstr<C>& Tstr<C>::alloc( const unsigned int characters,
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::giveOwnership( C* dynamicMemory, const unsigned int bufferlen )
+template<class C> CTstr<C>& CTstr<C>::giveOwnership( C* dynamicMemory, const unsigned int bufferlen )
 {
-	if ( bufferlen < c_sizeofBaseString )
+	if ( bufferlen < c_csizeofBaseString )
 	{
 		set( dynamicMemory, bufferlen );
 		delete[] dynamicMemory;
@@ -267,7 +270,7 @@ template<class C> Tstr<C>& Tstr<C>::giveOwnership( C* dynamicMemory, const unsig
 }
 
 //-----------------------------------------------------------------------------
-template<class C> unsigned int Tstr<C>::release( C** toBuf )
+template<class C> unsigned int CTstr<C>::release( C** toBuf )
 {
 	unsigned int retLen = size();
 
@@ -282,14 +285,14 @@ template<class C> unsigned int Tstr<C>::release( C** toBuf )
 		{
 			*toBuf = m_str;
 			m_str = m_smallbuf;
-			m_buflen = c_sizeofBaseString;
+			m_buflen = c_csizeofBaseString;
 		}
 	}
 	else if ( m_str != m_smallbuf )
 	{
 		delete[] m_str;
 		m_str = m_smallbuf;
-		m_buflen = c_sizeofBaseString;
+		m_buflen = c_csizeofBaseString;
 	}
 
 	m_len = 0;
@@ -299,7 +302,7 @@ template<class C> unsigned int Tstr<C>::release( C** toBuf )
 }
 
 //-----------------------------------------------------------------------------
-template<class C> bool Tstr<C>::fileToBuffer( const char* fileName, const bool appendToBuffer )
+template<class C> bool CTstr<C>::fileToBuffer( const char* fileName, const bool appendToBuffer )
 {
 	if ( !fileName )
 	{
@@ -345,7 +348,7 @@ template<class C> bool Tstr<C>::fileToBuffer( const char* fileName, const bool a
 }
 
 //-----------------------------------------------------------------------------
-template<class C> bool Tstr<C>::bufferToFile( const char* fileName, const bool append) const
+template<class C> bool CTstr<C>::bufferToFile( const char* fileName, const bool append) const
 {
 	if ( !fileName )
 	{
@@ -365,7 +368,7 @@ template<class C> bool Tstr<C>::bufferToFile( const char* fileName, const bool a
 }
 
 //-----------------------------------------------------------------------------
-template<class C> unsigned int Tstr<C>::replace( const C* oldstr, const C* newstr, const bool ignoreCase /*=false*/, const int occurances /*=0*/ )
+template<class C> unsigned int CTstr<C>::replace( const C* oldstr, const C* newstr, const bool ignoreCase /*=false*/, const int occurances /*=0*/ )
 {
 	if ( !oldstr || !newstr )
 	{
@@ -374,7 +377,7 @@ template<class C> unsigned int Tstr<C>::replace( const C* oldstr, const C* newst
 
 	int r = 0;
 
-	Tstr newStr;
+	CTstr newStr;
 	newStr.alloc( m_len, false );
 
 	for( unsigned int pos=0; pos<m_len; pos++ )
@@ -433,7 +436,7 @@ template<class C> unsigned int Tstr<C>::replace( const C* oldstr, const C* newst
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::trim()
+template<class C> CTstr<C>& CTstr<C>::trim()
 {
 	unsigned int start = 0;
 
@@ -466,7 +469,7 @@ template<class C> Tstr<C>& Tstr<C>::trim()
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::rtrim()
+template<class C> CTstr<C>& CTstr<C>::rtrim()
 {
 	if ( !m_len )
 	{
@@ -488,7 +491,7 @@ template<class C> Tstr<C>& Tstr<C>::rtrim()
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::ltrim()
+template<class C> CTstr<C>& CTstr<C>::ltrim()
 {
 	unsigned int start = 0;
 
@@ -506,18 +509,18 @@ template<class C> Tstr<C>& Tstr<C>::ltrim()
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::truncate( const unsigned int newLen )
+template<class C> CTstr<C>& CTstr<C>::truncate( const unsigned int newLen )
 {
 	if ( newLen >= m_len )
 	{
 		return *this;
 	}
 
-	if ( newLen < c_sizeofBaseString )
+	if ( newLen < c_csizeofBaseString )
 	{
 		if ( m_str != m_smallbuf )
 		{
-			m_buflen = c_sizeofBaseString;
+			m_buflen = c_csizeofBaseString;
 			memcpy( m_smallbuf, m_str, newLen*sizeof(C) );
 			delete[] m_str;
 			m_str = m_smallbuf;
@@ -531,9 +534,9 @@ template<class C> Tstr<C>& Tstr<C>::truncate( const unsigned int newLen )
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C> Tstr<C>::subStr( const unsigned int from, const unsigned int to ) const
+template<class C> CTstr<C> CTstr<C>::subStr( const unsigned int from, const unsigned int to ) const
 {
-	Tstr<C> sub;
+	CTstr<C> sub;
 	if ( to > from && (from < m_len) && (to <= m_len) )
 	{
 		sub.set( m_str + from, to - from );
@@ -542,7 +545,7 @@ template<class C> Tstr<C> Tstr<C>::subStr( const unsigned int from, const unsign
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::shift( const unsigned int fromSourcePosition, const unsigned int toTargetPos /*=0*/ )
+template<class C> CTstr<C>& CTstr<C>::shift( const unsigned int fromSourcePosition, const unsigned int toTargetPos /*=0*/ )
 {
 	if ( fromSourcePosition >= m_len )
 	{
@@ -552,7 +555,7 @@ template<class C> Tstr<C>& Tstr<C>::shift( const unsigned int fromSourcePosition
 	{
 		unsigned int bytes = m_len - fromSourcePosition;
 
-		if ( (bytes + toTargetPos) < c_sizeofBaseString )
+		if ( (bytes + toTargetPos) < c_csizeofBaseString )
 		{
 			if ( m_str != m_smallbuf )
 			{
@@ -569,7 +572,7 @@ template<class C> Tstr<C>& Tstr<C>::shift( const unsigned int fromSourcePosition
 
 				delete[] m_str;
 				m_str = m_smallbuf;
-				m_buflen = c_sizeofBaseString;
+				m_buflen = c_csizeofBaseString;
 			}
 			else
 			{
@@ -593,7 +596,7 @@ template<class C> Tstr<C>& Tstr<C>::shift( const unsigned int fromSourcePosition
 }
 
 //-----------------------------------------------------------------------------
-template<class C> unsigned int Tstr<C>::dequeue( const unsigned int bytes, Tstr* str /*=0*/ )
+template<class C> unsigned int CTstr<C>::dequeue( const unsigned int bytes, CTstr* str /*=0*/ )
 {
 	int corrected = bytes > m_len ? m_len : bytes;
 	
@@ -607,9 +610,9 @@ template<class C> unsigned int Tstr<C>::dequeue( const unsigned int bytes, Tstr*
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::escape( const C* chars, Tstr<C>* target, const C escapeCharacter )
+template<class C> CTstr<C>& CTstr<C>::escape( const C* chars, CTstr<C>* target, const C escapeCharacter )
 {
-	Tstr<C> escapedString;
+	CTstr<C> escapedString;
 
 	for( unsigned int i=0 ; i<m_len ; i++ )
 	{
@@ -651,7 +654,7 @@ template<class C> Tstr<C>& Tstr<C>::escape( const C* chars, Tstr<C>* target, con
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::unescape( const C escapeCharacter )
+template<class C> CTstr<C>& CTstr<C>::unescape( const C escapeCharacter )
 {
 	if ( m_len <= 1 )
 	{
@@ -676,7 +679,7 @@ template<class C> Tstr<C>& Tstr<C>::unescape( const C escapeCharacter )
 }
 
 //-----------------------------------------------------------------------------
-template<class C> bool Tstr<C>::isMatch( const C* buf, bool matchCase /*=true*/, bool matchPartial /*=false*/ ) const
+template<class C> bool CTstr<C>::isMatch( const C* buf, bool matchCase /*=true*/, bool matchPartial /*=false*/ ) const
 {
 	if ( !buf )
 	{
@@ -729,7 +732,7 @@ template<class C> bool Tstr<C>::isMatch( const C* buf, bool matchCase /*=true*/,
 }
 
 //-----------------------------------------------------------------------------
-template<class C> const C* Tstr<C>::find( const C* buf, const bool matchCase ) const
+template<class C> const C* CTstr<C>::find( const C* buf, const bool matchCase ) const
 {
 	if ( !buf || !m_len )
 	{
@@ -778,7 +781,7 @@ template<class C> const C* Tstr<C>::find( const C* buf, const bool matchCase ) c
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::insert( const C* buf, const unsigned int len /*=-1*/, const unsigned int startPos /*=0*/ )
+template<class C> CTstr<C>& CTstr<C>::insert( const C* buf, const unsigned int len /*=-1*/, const unsigned int startPos /*=0*/ )
 {
 	// compute the len if it wasn't fed in (can't use strlen() since this is sizeof <C>)
 	unsigned int realLen = len;
@@ -825,7 +828,7 @@ template<class C> Tstr<C>& Tstr<C>::insert( const C* buf, const unsigned int len
 }
 
 //-----------------------------------------------------------------------------
-template<class C> Tstr<C>& Tstr<C>::append( const C c )
+template<class C> CTstr<C>& CTstr<C>::append( const C c )
 {
 	if ( m_len >= m_buflen )
 	{
@@ -836,4 +839,5 @@ template<class C> Tstr<C>& Tstr<C>::append( const C c )
 	return *this;
 }
 
+}
 #endif

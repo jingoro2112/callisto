@@ -2,29 +2,26 @@
 #define VM_H
 /*------------------------------------------------------------------------------*/
 
-#include "../include/callisto.h"
+#include "callisto.h"
 
 #include <stdlib.h>
-#include "portable_endian.h"
 #include "value.h"
-#include "object_tpool.h"
-#include "linkhash.h"
-#include "linklist.h"
-#include "hash.h"
-#include "str.h"
-#include "log.h"
-#include "locks.h"
-#include "event.h"
+#include "c_objects.h"
+#include "c_linkhash.h"
+#include "c_linklist.h"
+#include "c_hash.h"
+#include "c_str.h"
+#include "c_log.h"
 #include "opcode.h"
 
 #define D_OPERATOR(a) //a
 #define D_ARG_SETUP(a) //a
 
-extern CLog Log;
+namespace Callisto { struct ExecutionFrame; }
+using namespace Callisto;
 
 extern int g_Callisto_lastErr;
-
-struct ExecutionFrame;
+extern CLog C_Log;
 
 //------------------------------------------------------------------------------
 // a thread of execution that has its own unit space of instantiated
@@ -32,7 +29,7 @@ struct ExecutionFrame;
 struct Callisto_ExecutionContext
 {
 	char state;
-	char threadId;
+	int threadId;
 	char numberOfArgs;
 	char warning;
 			
@@ -46,8 +43,12 @@ struct Callisto_ExecutionContext
 
 	ExecutionFrame* frame;
 	unsigned int textOffsetToResume;
-	
-	static CObjectTPool<ExecutionFrame> m_framePool;
+	int64_t sleepUntil;
+
+	Callisto_CallbackFunction function;
+	Callisto_Handle returnHandle;
+
+	static CTPool<ExecutionFrame> m_framePool;
 
 	Callisto_Context* callisto;
 
@@ -59,6 +60,8 @@ struct Callisto_ExecutionContext
 		stack = 0;
 		stackSize = 0;
 		stackPointer = 0;
+		sleepUntil = 0;
+		userData = 0;
 	}
 	
 	~Callisto_ExecutionContext()
@@ -67,6 +70,11 @@ struct Callisto_ExecutionContext
 		m_framePool.release( frame );
 	}
 };
+
+int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen );
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
 struct ExecutionFrame
@@ -77,24 +85,10 @@ struct ExecutionFrame
 	Value unitContainer; // autoritative location of definition and namespace
 	ExecutionFrame* next;
 
-	static void clear( ExecutionFrame& F )
-	{
-		clearValue( F.unitContainer );
-	}
+	static void clear( ExecutionFrame& F ) { clearValue( F.unitContainer ); }
 	
 	ExecutionFrame() { unitContainer.type32 = CTYPE_NULL; unitContainer.i64 = 0; }
 };
-
-			
-//------------------------------------------------------------------------------
-void Callisto_ExecutionContext::clear()
-{
-	clearValue( object );
-	delete[] stack;
-	stack = 0;
-	stackSize = 0;
-	ExecutionFrame::clear( *frame );
-}
 
 //------------------------------------------------------------------------------
 struct TextSection
@@ -103,28 +97,67 @@ struct TextSection
 	unsigned int textOffsetTop;
 };
 
+//-----------------------------------------------------------------------
+class Callisto_WaitEvent
+{
+public:
+	Callisto_WaitEvent();
+	~Callisto_WaitEvent();
+	void signal();
+	void wait( const unsigned int milliseconds );
+
+private:
+
+	void* m_implementation;
+};
+
+}
+
+
+//------------------------------------------------------------------------------
+void Callisto_ExecutionContext::clear()
+{
+	clearValue( object );
+	delete[] stack;
+	stack = 0;
+	stackSize = 0;
+	sleepUntil = 0;
+	userData = 0;
+	ExecutionFrame::clear( *frame );
+}
+
+
+// Callisto_Context holds global info, it has a "root unit" that has no parents and represents global namespace
+// - pools all values and units keyvalues pool themselves
+
+// Callisto_ExecutionContext is a thread executing inside Callisto_Context
+// a Frame is an execution frame for calling a unit, it points to the current unit instantation
+// a unitDefinition is a unit definition
+// A Unit represents an instantiation of a unitDefinition, it has its own namespace
+
 //------------------------------------------------------------------------------
 struct Callisto_Context
 {
 	Callisto_RunOptions options;
 	
-	Cstr text; // code hangs here
-	CLinkList<TextSection> textSections;
-	CLinkHash<Cstr> symbols; // to reverse hashes (if loaded)
+	C_str text; // code hangs here
+	CCLinkList<TextSection> textSections;
+	CCLinkHash<C_str> symbols; // to reverse hashes (if loaded)
 	
-	Cstr err; // if an error is returned, it is loaded here
+	C_str err; // if an error is returned, it is loaded here
 
 	Value rootUnit;
-	CLinkHash<Value>* globalNameSpace; // cached from the above
+	CCLinkHash<Value>* globalNameSpace; // cached from the above
 		
-	CLinkHash<UnitDefinition> unitDefinitions;
-	CLinkHash<CLinkHash<UnitDefinition>> typeFunctions;
+	CCLinkHash<UnitDefinition> unitDefinitions;
+	CCLinkHash<CCLinkHash<UnitDefinition>> typeFunctions;
 
-	CLinkHash<Callisto_ExecutionContext> threads; // independant threads operating in this space
-	CLinkHash<Callisto_ExecutionContext>::Iterator scheduler;
+	CCLinkHash<Callisto_ExecutionContext> threads; // independant threads operating in this space
+	CCLinkHash<Callisto_ExecutionContext>::Iterator scheduler;
 	
-	char threadIdGenerator;
-	
+	int threadIdGenerator;
+	Callisto_WaitEvent OSWaitHandle; // whatever an OS-specific implementation needs to allow this function to wait but be interrupted
+
 	Callisto_Context( const Callisto_RunOptions* opt =0 )
 	{
 		rootUnit.allocUnit();
@@ -132,9 +165,9 @@ struct Callisto_Context
 		rootUnit.u = unitDefinitions.add( 0 );
 		rootUnit.u->numberOfParents = 0;
 		unitDefinitions.add( Callisto_THIS_HANDLE ); // so it cannot be created
-		threadIdGenerator = 0;
+		threadIdGenerator = 1;
 		scheduler.iterate( threads );
-
+		
 		if ( opt )
 		{
 			memcpy( &options, opt, sizeof(Callisto_RunOptions) );
@@ -147,6 +180,9 @@ struct Callisto_Context
 	}
 };
 
+namespace Callisto
+{
+
 //------------------------------------------------------------------------------
 enum SwitchFlags
 {
@@ -157,21 +193,22 @@ enum SwitchFlags
 
 int execute( Callisto_ExecutionContext* E );
 
-const Cstr& formatSymbol( Callisto_Context* C, unsigned int key );
-const Cstr& formatValue( Value const& Value );
-const Cstr& formatType( int type );
-const Cstr& formatOpcode( int opcode );
+const C_str& formatSymbol( Callisto_Context* C, unsigned int key );
+const C_str& formatValue( Value const& Value );
+const C_str& formatType( int type );
+const C_str& formatOpcode( int opcode );
 void dumpStack( Callisto_ExecutionContext* E );
 void dumpSymbols( Callisto_Context* C );
-Callisto_ExecutionContext* getExecutionContext( Callisto_Context* C, const long threadId =0 );
+Callisto_ExecutionContext* getExecutionContext( Callisto_Context* C, const int threadId =0 );
 
-#define popOne(E) { Value* V = ((E)->stack + --(E)->stackPointer); clearValue(*V); }
+#define popOne(E) { Value& V = *((E)->stack + --(E)->stackPointer); clearValue(V); }
 #define popOneOnly(E) { --(E)->stackPointer); }
 #define popNum(E,n) { for( int i=0; i<(n); ++i ) { popOne(E); } }
 #define getValueFromArg(E, arg)	(((E)->numberOfArgs > (arg)) ? (((E)->Args[(arg)].type == CTYPE_REFERENCE) ? (E)->Args[(arg)].v : (E)->Args + (arg)) : 0)
+#define WARN_STATUS_FLAG 0x80
 
 void getLiteralFromCodeStream( Callisto_ExecutionContext* E, Value& Value );
-void readStringFromCodeStream( Cstr& string, const char** T );
+void readStringFromCodeStream( C_str& string, const char** T );
 void doAssign( Callisto_ExecutionContext* E, const int operand1, const int operand2 );
 void doCompareEQ( Callisto_ExecutionContext* E, const int operand1, const int operand2 );
 void doCompareGT( Callisto_ExecutionContext* E, const int operand1, const int operand2 );
@@ -216,9 +253,15 @@ void addArrayElement( Callisto_ExecutionContext* E, unsigned int index );
 void addTableElement( Callisto_ExecutionContext* E );
 void dereferenceFromTable( Callisto_ExecutionContext* E );
 
-bool isValidLabel( Cstr& token, bool doubleColonOkay =false );
+Callisto_ExecutionContext* doCreateThreadFromUnit( Callisto_Context* C, UnitDefinition* unit, const int args );
 
-int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen );
+bool isValidLabel( C_str& token, bool doubleColonOkay =false );
+
+// OS- specific calls, default implementations exist
+void Callisto_sleep( const int milliseconds );
+int64_t Callisto_getCurrentMilliseconds();
+int64_t Callisto_getEpoch();
+int Callisto_startThread( Callisto_ExecutionContext* exec );
 
 //------------------------------------------------------------------------------
 inline Value* getStackValue( Callisto_ExecutionContext* E, int offset )
@@ -267,6 +310,7 @@ inline void ensureStack( Callisto_ExecutionContext* E )
 	delete[] old;
 }
 
+//------------------------------------------------------------------------------
 struct CodeHeader
 {
 	int32_t version;
@@ -342,7 +386,7 @@ inline void doPostIncrement( Callisto_ExecutionContext* E, const int operand )
 	else
 	{
 		value = value->v;
-		D_ARG_SETUP(Log("Unary arg setup from operand[%d]", E->stackPointer - operand));
+		D_ARG_SETUP(C_Log("Unary arg setup from operand[%d]", E->stackPointer - operand));
 
 		if ( value->type == CTYPE_INT )
 		{
@@ -350,7 +394,7 @@ inline void doPostIncrement( Callisto_ExecutionContext* E, const int operand )
 			clearValue( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = result;
-			D_OPERATOR(Log("doPostDecrement<1> [%lld]", destination->i64));
+			D_OPERATOR(C_Log("doPostDecrement<1> [%lld]", destination->i64));
 		}
 		else if ( value->type == CTYPE_FLOAT )
 		{
@@ -358,7 +402,7 @@ inline void doPostIncrement( Callisto_ExecutionContext* E, const int operand )
 			clearValue( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
-			D_OPERATOR(Log("doPostDecrement<2> [%g]", destination->d));
+			D_OPERATOR(C_Log("doPostDecrement<2> [%g]", destination->d));
 		}
 		else
 		{
@@ -382,7 +426,7 @@ inline void doPostDecrement( Callisto_ExecutionContext* E, const int operand )
 	else
 	{
 		value = value->v;
-		D_ARG_SETUP(Log("Unary arg setup from operand[%d]", E->stackPointer - operand));
+		D_ARG_SETUP(C_Log("Unary arg setup from operand[%d]", E->stackPointer - operand));
 
 		if ( value->type == CTYPE_INT )
 		{
@@ -390,7 +434,7 @@ inline void doPostDecrement( Callisto_ExecutionContext* E, const int operand )
 			clearValue( *destination );
 			destination->type32 = CTYPE_INT;
 			destination->i64 = result;
-			D_OPERATOR(Log("doPostDecrement<1> [%lld]", destination->i64));
+			D_OPERATOR(C_Log("doPostDecrement<1> [%lld]", destination->i64));
 		}
 		else if ( value->type == CTYPE_FLOAT )
 		{
@@ -398,7 +442,7 @@ inline void doPostDecrement( Callisto_ExecutionContext* E, const int operand )
 			clearValue( *destination );
 			destination->type32 = CTYPE_FLOAT;
 			destination->d = result;
-			D_OPERATOR(Log("doPostDecrement<2> [%g]", destination->d));
+			D_OPERATOR(C_Log("doPostDecrement<2> [%g]", destination->d));
 		}
 		else
 		{
@@ -418,12 +462,12 @@ inline void doPreIncrement( Callisto_ExecutionContext* E, const int operand )
 	if ( value->type == CTYPE_INT )
 	{
 		++value->i64;
-		D_OPERATOR(Log("doPreIncrement<1> [%lld]", value->i64));
+		D_OPERATOR(C_Log("doPreIncrement<1> [%lld]", value->i64));
 	}
 	else if ( value->type == CTYPE_FLOAT )
 	{
 		++value->d;
-		D_OPERATOR(Log("doPreIncrement<2> [%g]", value->d));
+		D_OPERATOR(C_Log("doPreIncrement<2> [%g]", value->d));
 	}
 	else
 	{
@@ -442,18 +486,20 @@ inline void doPreDecrement( Callisto_ExecutionContext* E, const int operand )
 	if ( value->type == CTYPE_INT )
 	{
 		--value->i64;
-		D_OPERATOR(Log("doPreDecrement<1> [%lld]", value->i64));
+		D_OPERATOR(C_Log("doPreDecrement<1> [%lld]", value->i64));
 	}
 	else if ( value->type == CTYPE_FLOAT )
 	{
 		--value->d;
-		D_OPERATOR(Log("doPreDecrement<2> [%g]", value->d));
+		D_OPERATOR(C_Log("doPreDecrement<2> [%g]", value->d));
 	}
 	else
 	{
 		E->warning = CE_IncompatibleDataTypes;
 		clearValue( *destination );
 	}
+}
+
 }
 
 #endif

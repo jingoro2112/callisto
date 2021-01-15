@@ -1,11 +1,10 @@
 #include "arch.h"
-#include "locks.h"
-#include "log.h"
+#include "c_log.h"
 #include "vm.h"
 #include "utf8.h"
 #include "array.h"
 
-extern CLog Log;
+Callisto::CLog C_Log;
 
 #define D_LOAD(a) //a
 #define D_EXECUTE(a) //a
@@ -56,7 +55,7 @@ void Callisto_importFunctionList( Callisto_Context* C, const Callisto_FunctionEn
 		unitDefinition->userData = entries[i].userData;
 		unitDefinition->textOffset = 0;
 
-		D_IMPORT(Log("imported function [%s] [0x%08X]", entries[i].functionName, key));
+		D_IMPORT(C_Log("imported function [%s] [0x%08X]", entries[i].functionName, key));
 	}
 }
 
@@ -69,6 +68,7 @@ void Callisto_importAll( Callisto_Context *C )
 	Callisto_importFile( C );
 	Callisto_importJson( C );
 	Callisto_importIterators( C );
+	Callisto_importSystem( C );
 }
 
 //------------------------------------------------------------------------------
@@ -90,7 +90,7 @@ void Callisto_importFunction( Callisto_Context* C, const char* functionName, Cal
 //------------------------------------------------------------------------------
 const char* Callisto_formatError( const int err )
 {
-	static Cstr ret;
+	static C_str ret;
 	switch( err )
 	{
 		default: return ret = "UNKNOWN ERROR";
@@ -139,32 +139,56 @@ const char* Callisto_formatError( const int err )
 }
 
 //------------------------------------------------------------------------------
-int runSchedule( Callisto_Context *C )
+static int runScheduler( Callisto_Context *C )
 {
+	int64_t waitFor;
+	bool workDone;
+
 	for(;;)
 	{
-		bool idle = true;
 		Callisto_ExecutionContext *E = C->scheduler.getFirst();
+		waitFor = 0;
+		workDone = false;
 		while( E )
 		{
-			if ( E->state == Callisto_ThreadState::Runnable )
+			if ( E->state & Callisto_ThreadState::Runnable )
 			{
+				if ( E->sleepUntil )
+				{
+					if ( E->sleepUntil > Callisto_getCurrentMilliseconds() )
+					{
+						if ( E->sleepUntil > waitFor )
+						{
+							waitFor = E->sleepUntil;
+						}
+
+						E = C->scheduler.getNext();
+						continue;
+					}
+					else
+					{
+						E->sleepUntil = 0;
+					}
+				}
+				
+				E->state |= Callisto_ThreadState::Running;
+				
 				if ( execute(E) )
 				{
-					E->state = Callisto_ThreadState::Reap;
+					E->state |= Callisto_ThreadState::Reap;
 					
 					if ( C->options.returnOnError )
 					{
 						return g_Callisto_lastErr;
 					}
 				}
-				else
-				{
-					idle = false;
-				}
+
+				workDone = true;
+
+				E->state &= ~Callisto_ThreadState::Running;
 			}
 
-			if ( E->state == Callisto_ThreadState::Reap )
+			if ( E->state & Callisto_ThreadState::Reap )
 			{
 				if ( E->stackPointer != 1 )
 				{
@@ -173,19 +197,31 @@ int runSchedule( Callisto_Context *C )
 				}
 
 				C->scheduler.removeCurrent();
+				
 				E = C->scheduler.getCurrent();
-				continue;
 			}
-
-			E = C->scheduler.getNext();
+			else
+			{
+				E = C->scheduler.getNext();
+			}
 		}
 
-		if ( !idle )
+		if ( waitFor )
 		{
-			continue;
+			int64_t current = Callisto_getCurrentMilliseconds();
+			if ( waitFor > current )
+			{
+				C->OSWaitHandle.wait( (unsigned int)(waitFor - current) );
+			}
+			
+			waitFor = 0;
 		}
-
-		if ( C->options.returnOnIdle )
+		else if ( !workDone )
+		{
+			C->OSWaitHandle.wait( 500 );
+		}
+		
+		if ( !C->scheduler.count() && C->options.returnOnIdle )
 		{
 			return CE_NoError;
 		}
@@ -226,7 +262,7 @@ inline Callisto_Handle setValueSetup( Callisto_Context* C, const Callisto_Handle
 //------------------------------------------------------------------------------
 int Callisto_runFileCompiled( Callisto_Context* C, const char* fileName, const Callisto_Handle argumentValueHandle )
 {
-	Cstr file;
+	C_str file;
 	if ( !file.fileToBuffer(fileName) )
 	{
 		return g_Callisto_lastErr = CE_FileErr;
@@ -247,7 +283,7 @@ int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 	header = (CodeHeader *)inData;
 	if ( ntohl(header->version) != CALLISTO_VERSION )
 	{
-		D_LOAD(Log("bad version [0x%08X]", ntohl(header->version)));
+		D_LOAD(C_Log("bad version [0x%08X]", ntohl(header->version)));
 		return g_Callisto_lastErr = CE_BadVersion;
 	}
 
@@ -258,7 +294,7 @@ int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 
 	section->textOffsetTop = C->text.size();
 
-	D_LOAD(Log("first block [0x%08X]", ntohl(header->firstUnitBlock)));
+	D_LOAD(C_Log("first block [0x%08X]", ntohl(header->firstUnitBlock)));
 
 	const char* T = C->text.c_str() + ntohl(header->firstUnitBlock) + textLocation;
 
@@ -267,7 +303,7 @@ int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 	{
 		unsigned int key = ntohl(*(unsigned int *)T);
 		T += 4;
-		Cstr* label = C->symbols.get( key );
+		C_str* label = C->symbols.get( key );
 		if ( !label )
 		{
 			label = C->symbols.add( key );
@@ -276,18 +312,18 @@ int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 		label->set( T, size );
 		T += size;
 
-		D_LOAD(Log("loaded symbol [%s:0x%08X]", label->c_str(), key));
+		D_LOAD(C_Log("loaded symbol [%s:0x%08X]", label->c_str(), key));
 	}
 
 	for( int i=0; i<(int)ntohl(header->unitCount); i++ )
 	{
-		Cstr name;
+		C_str name;
 		readStringFromCodeStream( name, &T );
 
 		unsigned int key = ntohl( *(unsigned int *)T );
 		T += 4;
 
-		D_LOAD(Log("Adding unit [%s] signature [0x%08X]", name.c_str(), key ));
+		D_LOAD(C_Log("Adding unit [%s] signature [0x%08X]", name.c_str(), key ));
 
 		UnitDefinition* unitDefinition = C->unitDefinitions.get( key );
 		if ( unitDefinition )
@@ -308,22 +344,22 @@ int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 		unitDefinition->numberOfParents = (int)(*(char *)T);
 		T++;
 
-		D_LOAD(Log("unitDefinition [%s]@[%d] [%d]parents", name.c_str(), unitDefinition->textOffset, unitDefinition->numberOfParents));
+		D_LOAD(C_Log("unitDefinition [%s]@[%d] [%d]parents", name.c_str(), unitDefinition->textOffset, unitDefinition->numberOfParents));
 
-		for( int i=0; i<unitDefinition->numberOfParents; i++ )
+		for( int j=0; j<unitDefinition->numberOfParents; j++ )
 		{
-			unitDefinition->parentList[i] = ntohl(*(unsigned int *)T);
-			D_LOAD(Log("parent[0x%08X]", unitDefinition->parentList[i]));
+			unitDefinition->parentList[j] = ntohl(*(unsigned int *)T);
+			D_LOAD(C_Log("parent[0x%08X]", unitDefinition->parentList[j]));
 			T += 4;
 		}
 		unitDefinition->parentList[unitDefinition->numberOfParents] = key;
-		D_LOAD(Log("unitDefinition[0x%08X]", key));
+		D_LOAD(C_Log("unitDefinition[0x%08X]", key));
 		++unitDefinition->numberOfParents;
 
 		int children = ntohl(*(unsigned int *)T);
 		T += 4;
 
-		D_LOAD(Log("%d children", children));
+		D_LOAD(C_Log("%d children", children));
 		for( int j=0; j<children; j++ )
 		{
 			key = ntohl(*(unsigned int *)T);
@@ -338,7 +374,7 @@ int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 			childUnit->child = 0;
 			T += 4;
 
-			D_LOAD(Log("key [0x%08X] maps to [0x%08X]", key, mapsTo));
+			D_LOAD(C_Log("key [0x%08X] maps to [0x%08X]", key, mapsTo));
 		}
 	}
 
@@ -346,14 +382,14 @@ int loadEx( Callisto_Context* C, const char* inData, const unsigned int inLen )
 	T += 4;
 	if ( !section->sourceOffset )
 	{
-		D_LOAD(Log("source offset [%d]", section->sourceOffset));
+		D_LOAD(C_Log("source offset [%d]", section->sourceOffset));
 	}
 
 	// now that all the units are loaded, set up the children
-	CLinkHash<UnitDefinition>::Iterator iter( C->unitDefinitions );
+	CCLinkHash<UnitDefinition>::Iterator iter( C->unitDefinitions );
 	for( UnitDefinition* U = iter.getFirst(); U; U = iter.getNext() )
 	{
-		CLinkHash<ChildUnit>::Iterator iter2(U->childUnits);
+		CCLinkHash<ChildUnit>::Iterator iter2(U->childUnits);
 		for( ChildUnit* child = iter2.getFirst(); child; child = iter2.getNext() )
 		{
 			UnitDefinition* unit = C->unitDefinitions.get( child->key );
@@ -406,7 +442,7 @@ int Callisto_runCompiled( Callisto_Context* C,
 		Callisto_releaseValue( C, argumentValueHandle );
 	}
 	
-	return runSchedule( C );
+	return runScheduler( C );
 }
 
 //------------------------------------------------------------------------------
@@ -449,7 +485,7 @@ const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* u
 	{
 		for( ; argumentValueHandleList[(int)E->numberOfArgs]; ++E->numberOfArgs )
 		{
-			if ( !(val = getValueFromHandle(E->callisto, argumentValueHandleList[(int)E->numberOfArgs])) )
+			if ( (val = getValueFromHandle(E->callisto, argumentValueHandleList[(int)E->numberOfArgs])) == 0 )
 			{
 				g_Callisto_lastErr = CE_HandleNotFound;
 				return 0;
@@ -500,50 +536,6 @@ const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* u
 
 		return ret;
 	}
-}
-
-//------------------------------------------------------------------------------
-const int Callisto_yield( Callisto_ExecutionContext *E )
-{
-	// when the C function returns, the VM will wait it
-	E->warning = (char)0x80;
-	return CE_NoError;
-}
-
-//------------------------------------------------------------------------------
-const int Callisto_resume( Callisto_Context* C, const long threadId, const Callisto_Handle argumentValueHandle )
-{
-	return Callisto_resume( getExecutionContext(C, threadId), argumentValueHandle );
-}
-
-//------------------------------------------------------------------------------
-const int Callisto_resume( Callisto_ExecutionContext *E, const Callisto_Handle argumentValueHandle )
-{
-	if ( !E )
-	{
-		return CE_ThreadNotFound;
-	}
-
-	if ( E->state != Callisto_ThreadState::Waiting )
-	{
-		return CE_ThreadNotWaiting;
-	}
-
-	Value* ret = getNextStackEntry( E );
-	if ( argumentValueHandle )
-	{
-		Value* arg = getValueFromHandle( E->callisto, argumentValueHandle );
-		if ( arg )
-		{
-			valueMove( ret, arg );
-		}
-
-		Callisto_releaseValue( E->callisto, argumentValueHandle );
-	}
-
-	E->state = Callisto_ThreadState::Runnable;
-	
-	return CE_NoError;
 }
 
 //------------------------------------------------------------------------------
@@ -599,7 +591,7 @@ const wchar_t* Callisto_getWStringArg( Callisto_ExecutionContext* E,
 		return 0;
 	}
 
-	Wstr ret;
+	W_str ret;
 
 	UTF8ToUnicode( (unsigned char *)V->string->c_str(), ret );
 
@@ -867,7 +859,7 @@ void Callisto_setTypeMethods( Callisto_Context* C, const Callisto_ArgType type, 
 {
 	int vtype = valueTypeFromUserType( type );
 	
-	CLinkHash<UnitDefinition>* table = C->typeFunctions.get( vtype );
+	CCLinkHash<UnitDefinition>* table = C->typeFunctions.get( vtype );
 	if ( !table )
 	{
 		table = C->typeFunctions.add( vtype );
@@ -1138,18 +1130,6 @@ void Callisto_releaseValue( Callisto_Context* C, const Callisto_Handle handle )
 }
 
 //------------------------------------------------------------------------------
-const Callisto_ThreadState Callisto_getThreadState( Callisto_ExecutionContext* E )
-{
-	return (Callisto_ThreadState)E->state;
-}
-
-//------------------------------------------------------------------------------
-const long Callisto_getThreadId( Callisto_ExecutionContext* E )
-{
-	return E->threadId;
-}
-
-//------------------------------------------------------------------------------
 int Callisto_importConstant( Callisto_ExecutionContext* E, const char* name, const Callisto_Handle handle )
 {
 	return Callisto_importConstant( E->callisto, name, handle );
@@ -1182,3 +1162,71 @@ int Callisto_importConstant( Callisto_Context* C, const char* name, const Callis
 	return 0;
 }
 
+//------------------------------------------------------------------------------
+const Callisto_ThreadState Callisto_getThreadState( Callisto_ExecutionContext* E )
+{
+	return (Callisto_ThreadState)E->state;
+}
+
+//------------------------------------------------------------------------------
+const int Callisto_getThreadId( Callisto_ExecutionContext* E )
+{
+	return E->threadId;
+}
+
+//------------------------------------------------------------------------------
+void Callisto_yield( Callisto_ExecutionContext* E )
+{
+	E->state |= Callisto_ThreadState::Yield;
+}
+
+//------------------------------------------------------------------------------
+const int Callisto_startThread( Callisto_ExecutionContext* E, const char* unitName, const Callisto_Handle argumentHandle )
+{
+	Callisto_Handle args[2] = { argumentHandle, 0 };
+	return Callisto_startThread( E->callisto, unitName, args );
+}
+
+//------------------------------------------------------------------------------
+const int Callisto_startThread( Callisto_ExecutionContext* E, const char* unitName, const Callisto_Handle* argumentValueHandleList )
+{
+	return Callisto_startThread( E->callisto, unitName, argumentValueHandleList );
+}
+
+//------------------------------------------------------------------------------
+const int Callisto_startThread( Callisto_Context* C, const char* unitName, const Callisto_Handle argumentHandle )
+{
+	Callisto_Handle args[2] = { argumentHandle, 0 };
+	return Callisto_startThread( C, unitName, args );
+}
+
+//------------------------------------------------------------------------------
+const int Callisto_startThread( Callisto_Context* C, const char* unitName, const Callisto_Handle* argumentValueHandleList )
+{
+	UnitDefinition *unit = C->unitDefinitions.get( hash32(unitName, strlen(unitName)) );
+	if ( !unit )
+	{
+		g_Callisto_lastErr = CE_UnitNotFound;
+		return 0;
+	}
+
+	int args = 0;
+	for( ; argumentValueHandleList && argumentValueHandleList[args]; ++args )
+	{
+		if ( !getValueFromHandle(C, argumentValueHandleList[args]) )
+		{
+			g_Callisto_lastErr = CE_HandleNotFound;
+			return 0;
+		}
+	}
+
+	Callisto_ExecutionContext* newExec = doCreateThreadFromUnit( C, unit, args );
+
+	for( int i=0; i<args; ++i)
+	{
+		valueMirror( newExec->stack + newExec->stackPointer - (i+2),
+					 getValueFromHandle(C, argumentValueHandleList[args]) );
+	}
+
+	return newExec->threadId;
+}

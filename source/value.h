@@ -2,13 +2,18 @@
 #define VALUE_H
 /*------------------------------------------------------------------------------*/
 
-#include "../include/callisto.h"
+#include "callisto.h"
 
-#include "hash.h"
-#include "linkhash.h"
-#include "object_tpool.h"
+#include "c_hash.h"
+#include "c_linkhash.h"
+#include "c_objects.h"
 #include "array.h"
-#include "str.h"
+#include "c_str.h"
+
+namespace Callisto
+{
+
+struct ExecutionFrame;
 
 //------------------------------------------------------------------------------
 enum ValueFlags
@@ -26,7 +31,6 @@ enum ValueTypeBits
 	BIT_CAN_HASH = 1<<4,
 	BIT_CAN_LOGIC = 1<<5,
 	BIT_PASS_BY_VALUE = 1<<6,
-	BIT_COMPARE_DIRECT = 1<<7,
 
 	// TODO: theoretically these can be OR'ed in for direct assign when the
 	// hash is known to be pre-computed, but check endian-ness before
@@ -48,22 +52,21 @@ enum ValueType
 	CTYPE_STRING   = 6 | BIT_CAN_HASH, // so switch on "by ref" can be optimal
 
 	CTYPE_NULL     = 7 | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE,
-	CTYPE_INT      = 8 | BIT_CAN_HASH | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE | BIT_COMPARE_DIRECT,
-	CTYPE_FLOAT    = 9 | BIT_CAN_HASH | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE | BIT_COMPARE_DIRECT,
+	CTYPE_INT      = 8 | BIT_CAN_HASH | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE,
+	CTYPE_FLOAT    = 9 | BIT_CAN_HASH | BIT_CAN_LOGIC | BIT_PASS_BY_VALUE,
 
 	CTYPE_FRAME    = 10 | BIT_PASS_BY_VALUE,
 	// 11 reserved
 	// 12 reserved
 	// 13 reserved
 	// 14 reserved
-
+	
 	CTYPE_REFERENCE = 15 | BIT_PASS_BY_VALUE,
 };
 
-struct Value;
-struct ExecutionFrame;
-struct CKeyValue;
 struct UnitDefinition;
+struct Value;
+struct CKeyValue;
 
 inline void clearValueFunc( Value& V );
 
@@ -75,7 +78,7 @@ void clearValueRef( Value& Value );
 struct ValueIterator
 {
 	int64_t index;
-	CLinkHash<CKeyValue>::Iterator iterator;
+	CCLinkHash<CKeyValue>::Iterator iterator;
 };
 
 #pragma pack(4) // on a 64-bit system this is a 20 byte struct, 32-bit is 16
@@ -85,9 +88,9 @@ struct Value
 	union // contains only pointers, so 'ref2' can be a void* class
 	{
 		Carray<Value>* array;
-		Cstr* string;
-		CLinkHash<CKeyValue>* tableSpace; // for units or tables
-		CLinkHash<Value>* unitSpace; // for units or tables
+		C_str* string;
+		CCLinkHash<CKeyValue>* tableSpace; // for units or tables
+		CCLinkHash<Value>* unitSpace; // for units or tables
 		ExecutionFrame* frame;
 		void* hashIterator; // hang iterators from here
 
@@ -142,13 +145,13 @@ struct Value
 	void allocTable() { type32 = CTYPE_TABLE; tableSpace = m_tableSpacePool.get(); }
 	void allocUnit() { type32 = CTYPE_UNIT; unitSpace = m_unitSpacePool.get(); }
 
-	static CObjectTPool<Carray<Value>> m_arrayPool;
-	static CObjectTPool<Cstr> m_stringPool;
-	static CObjectTPool<CLinkHash<CKeyValue>> m_tableSpacePool;
-	static CObjectTPool<Value> m_valuePool;
-	static CObjectTPool<ValueIterator> m_iteratorPool;
+	static CTPool<Carray<Value>> m_arrayPool;
+	static CTPool<C_str> m_stringPool;
+	static CTPool<CCLinkHash<CKeyValue>> m_tableSpacePool;
+	static CTPool<Value> m_valuePool;
+	static CTPool<ValueIterator> m_iteratorPool;
 
-	static CObjectTPool<CLinkHash<Value>> m_unitSpacePool;
+	static CTPool<CCLinkHash<Value>> m_unitSpacePool;
 
 	static void clear( Value& V ) { clearValue(V); }
 	
@@ -177,7 +180,7 @@ struct UnitDefinition
 	Callisto_CallbackFunction function; // what to call if this is a C function palceholder
 	void* userData;
 
-	CLinkHash<ChildUnit> childUnits; // list of units this unit is parent to
+	CCLinkHash<ChildUnit> childUnits; // list of units this unit is parent to
 
 	UnitDefinition() { member = false; }
 };
@@ -259,6 +262,8 @@ inline void deepCopy( Value* target, Value* source )
 inline void clearValueFunc( Value& V )
 {
 	clearValue( V );
+}
+
 }
 
 #endif

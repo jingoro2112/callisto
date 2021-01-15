@@ -39,6 +39,7 @@ void Callisto_destroyContext( Callisto_Context* C );
 enum Callisto_Error
 {
 	CE_NoError = 0,
+
 	CE_FileErr = -127,
 	CE_ImportMustBeString,
 	CE_ImportLoadError,
@@ -52,6 +53,7 @@ enum Callisto_Error
 	CE_ArgOutOfRange,
 
 	CE_ThreadNotFound,
+	CE_CannotSpawnThreadFromCFunc,
 	CE_UnitNotFound,
 	CE_ParentNotFound,
 	CE_UnitNotNative,
@@ -80,6 +82,7 @@ enum Callisto_Error
 
 	CE_ValueIsConst,
 	CE_TriedToCallNonUnit,
+	CE_NOT_IMPLEMENTED,
 };
 
 const int Callisto_lastErr();
@@ -87,10 +90,12 @@ const char* Callisto_formatError( const int err );
 
 enum Callisto_ThreadState
 {
-	Running =0, // is running right now
-	Runnable, // will run the next time the scheduler gets to it
-	Waiting, // waiting for an event
-	Reap, // completed, jsut waiting to be cleaned up by the scheduler
+	Runnable = 1<<0, // will run the next time the scheduler gets to it
+	Running  = 1<<1, // actually in the interpreter
+	FromC    = 1<<3, // came from a c thread call
+	Reap     = 1<<4, // requesting scheduler to clean up and recover all resources
+	Yield    = 1<<5, // c function returning wants to yield
+	Wait     = 1<<6, // asking to wait
 };
 
 struct Callisto_FunctionEntry
@@ -114,13 +119,14 @@ void Callisto_importMath( Callisto_Context *C );
 void Callisto_importFile( Callisto_Context *C );
 void Callisto_importJson( Callisto_Context *C );
 void Callisto_importIterators( Callisto_Context *C );
+void Callisto_importSystem( Callisto_Context *C );
 
 int Callisto_parse( const char* data, const int size, char** out, unsigned int* outLen, const bool addDebugInfo =false );
 
 int Callisto_runFile( Callisto_Context* C, const char* fileName, const Callisto_Handle argumentValueHandle =0 );
-int Callisto_run( Callisto_Context* C, const char* inData, const unsigned int inLen =0, const Callisto_Handle argumentValueHandle =0 );
-
 int Callisto_runFileCompiled( Callisto_Context* C, const char* fileName, const Callisto_Handle argumentValueHandle =0 );
+
+int Callisto_run( Callisto_Context* C, const char* inData, const unsigned int inLen =0, const Callisto_Handle argumentValueHandle =0 );
 int Callisto_runCompiled( Callisto_Context* C, const char* inData, const unsigned int inLen, const Callisto_Handle argumentValueHandle =0 );
 
 const Callisto_Handle Callisto_call( Callisto_ExecutionContext *E, const char* unitName, const Callisto_Handle argumentHandle );
@@ -195,14 +201,15 @@ const Callisto_Handle Callisto_getTableValue( Callisto_Context* C, const Callist
 void Callisto_releaseValue( Callisto_ExecutionContext* E, const Callisto_Handle handle );
 void Callisto_releaseValue( Callisto_Context* C, const Callisto_Handle handle );
 
-// not really implemented yet.. not even sure this is HOW I want to implement it
-const int Callisto_resume( Callisto_ExecutionContext *E, const Callisto_Handle argumentValueHandle =0 );
-const int Callisto_resume( Callisto_Context* C, const long threadId, const Callisto_Handle argumentValueHandle =0 );
+// thread operations
 const Callisto_ThreadState Callisto_getThreadState( Callisto_ExecutionContext* E );
-const Callisto_ThreadState Callisto_getThreadState( Callisto_ExecutionContext* E, Callisto_Context* C, const long threadId );
-const long Callisto_getThreadId( Callisto_ExecutionContext* E );
-const int Callisto_yield( Callisto_ExecutionContext *E );
-const int Callisto_wait( Callisto_ExecutionContext *E, const Callisto_Handle argumentValueHandle =0 );
+const Callisto_ThreadState Callisto_getThreadState( Callisto_Context* C, const int threadId );
 
+void Callisto_yield( Callisto_ExecutionContext* E );
+
+const int Callisto_startThread( Callisto_ExecutionContext* E, const char* unitName, const Callisto_Handle argumentHandle );
+const int Callisto_startThread( Callisto_ExecutionContext* E, const char* unitName, const Callisto_Handle* argumentValueHandleList =0 );
+const int Callisto_startThread( Callisto_Context* C, const char* unitName, const Callisto_Handle argumentHandle );
+const int Callisto_startThread( Callisto_Context* C, const char* unitName, const Callisto_Handle* argumentValueHandleList =0 );
 
 #endif

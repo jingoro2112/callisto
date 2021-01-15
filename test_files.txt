@@ -20,3 +20,4 @@ tests/018_import.c
 tests/019_member.c
 tests/020_stlib_file.c
 tests/021_stlib_iterators.c
+tests/022_threads.c

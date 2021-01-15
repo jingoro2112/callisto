@@ -1,15 +1,18 @@
-#ifndef ASCIIDUMP_H
-#define ASCIIDUMP_H
+#ifndef CALLISTO_ASCIIDUMP_H
+#define CALLISTO_ASCIIDUMP_H
 /*------------------------------------------------------------------------------*/
 
-#include "str.h"
+#include "c_str.h"
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
-inline const char* asciiDump( const void* d, unsigned int len, Cstr* str =0 )
+inline const char* asciiDump( const void* d, unsigned int len, C_str* str =0 )
 {
 	const unsigned char* data = (char unsigned *)d;
-	static Cstr local;
-	Cstr *use = str ? str : &local;
+	static C_str local;
+	C_str *use = str ? str : &local;
 	use->clear();
 	for( unsigned int i=0; i<len; i++ )
 	{
@@ -41,6 +44,6 @@ inline const char* asciiDump( const void* d, unsigned int len, Cstr* str =0 )
 	return use->c_str();
 }
 
+}
+
 #endif
-
-

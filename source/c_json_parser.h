@@ -1,10 +1,13 @@
-#ifndef JSON_PARSER_H
-#define JSON_PARSER_H
+#ifndef CALLISTO_JSON_PARSER_H
+#define CALLISTO_JSON_PARSER_H
 /*------------------------------------------------------------------------------*/
 
-#include "str.h"
-#include "linkhash.h"
-#include "hash.h"
+#include "c_str.h"
+#include "c_linkhash.h"
+#include "c_hash.h"
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
 /*
@@ -46,20 +49,20 @@ printf("key
 #define D_JSONPARSER(a) //a
 
 //------------------------------------------------------------------------------
-class JsonValue
+class CCJsonValue
 {
 public:
 
-	static inline void UTF8toJsonUnicode( const char* in, Cstr& out );
-	static inline int strJsonUnicodeToUTF8( const char* in, Cstr& out );
+	static inline void UTF8toJsonUnicode( const char* in, C_str& out );
+	static inline int strJsonUnicodeToUTF8( const char* in, C_str& out );
 	static inline int unicodeToUTF8( const unsigned int unicode, char* out, const unsigned int maxLen );
 
 	inline int parse( const char* buf, bool clearFirst =true );
 
 	// indent level of -1 means "no whitespace at all" so it's compact,
 	// set it to 0 for human-readable
-	inline Cstr& write( Cstr& str, int indentLevel =-1 ) const;
-	inline Cstr stringify( int indentLevel =-1 ) const { Cstr out; write(out, indentLevel); return out; }
+	inline C_str& write( C_str& str, int indentLevel =-1 ) const;
+	inline C_str stringify( int indentLevel =-1 ) const { C_str out; write(out, indentLevel); return out; }
 
 	// return the type of value this key is
 	enum types
@@ -75,21 +78,21 @@ public:
 	const int type() const { return m_type; }
 
 	// for objects, return the current key, for all other types this operation is not defined
-	const Cstr& key() const { return m_key; }
+	const C_str& key() const { return m_key; }
 
 	// for iterating through a list of objects when the keys are not known.
 	//NOTE: iteration order is not defined, only guaranteed to visit each key exactly once.
-	bool getObjectIterator( CLinkHash<JsonValue>::Iterator &iter ) { if ( m_values ) { iter.iterate(*m_values); return true; } return false; }
+	bool getObjectIterator( CCLinkHash<CCJsonValue>::Iterator &iter ) { if ( m_values ) { iter.iterate(*m_values); return true; } return false; }
 
-	CLinkHash<JsonValue>::Iterator begin() const { return m_values ? m_values->begin() : CLinkHash<JsonValue>::Iterator(); }
-	CLinkHash<JsonValue>::Iterator end() const { return m_values ? m_values->end() : CLinkHash<JsonValue>::Iterator(); }
+	CCLinkHash<CCJsonValue>::Iterator begin() const { return m_values ? m_values->begin() : CCLinkHash<CCJsonValue>::Iterator(); }
+	CCLinkHash<CCJsonValue>::Iterator end() const { return m_values ? m_values->end() : CCLinkHash<CCJsonValue>::Iterator(); }
 
 	// convert to a string if it's not
-	Cstr& string() { m_type = JSTRING; return m_str; }
-	Cstr& format( const char* pattern, ... ) { m_type = JSTRING; m_str.clear(); va_list arg; va_start( arg, pattern ); m_str.appendFormatVA( pattern, arg ); va_end( arg ); return m_str; }
+	C_str& string() { m_type = JSTRING; return m_str; }
+	C_str& format( const char* pattern, ... ) { m_type = JSTRING; m_str.clear(); va_list arg; va_start( arg, pattern ); m_str.appendFormatVA( pattern, arg ); va_end( arg ); return m_str; }
 
 	inline void clear();
-	JsonValue& null() { clear(); return *this; }
+	CCJsonValue& null() { clear(); return *this; }
 	const bool isNull() const { return m_type == JNULL; }
 
 	const bool exists() const { return this != &m_deadValue; }
@@ -99,7 +102,7 @@ public:
 	// does not validate that this object IS what is being requested,
 	// asking for a value of the wrong type is undefined
 	operator const char*() { return string().c_str(); }
-	operator const Cstr&() { return string(); }
+	operator const C_str&() { return string(); }
 	operator const int() { return (int)m_longlong; }
 	operator const unsigned int() { return (unsigned int)m_longlong; }
 	operator const long long() { return m_longlong; }
@@ -112,18 +115,18 @@ public:
 	const unsigned int numElements() const { return m_values ? m_values->count() : 0; }
 
 	// convert this value to the requested object, clear it, and return
-	JsonValue& object() { if ( m_type != JOBJECT ) { m_type = JOBJECT; createValues(); } return *this; }
-	JsonValue& list() { if ( m_type != JLIST ) { m_type = JLIST; createValues(); } return *this; }
-	JsonValue& sort( int(*compareFunc)(const JsonValue& item1, const JsonValue& item2) ) { if (m_values) { m_values->sort(compareFunc); } return *this; }
+	CCJsonValue& object() { if ( m_type != JOBJECT ) { m_type = JOBJECT; createValues(); } return *this; }
+	CCJsonValue& list() { if ( m_type != JLIST ) { m_type = JLIST; createValues(); } return *this; }
+	CCJsonValue& sort( int(*compareFunc)(const CCJsonValue& item1, const CCJsonValue& item2) ) { if (m_values) { m_values->sort(compareFunc); } return *this; }
 
 	// strings are keys(objects), integers are indexes(lists) if the
 	// item does not exist, the 'special' index of -1 for lists returns the next unconsumed index
-	inline JsonValue& operator[]( const char* key );
-	inline JsonValue& operator[]( const int index );
-	inline const JsonValue& operator[]( const char* key ) const;
-	inline const JsonValue& operator[]( const int index ) const;
+	inline CCJsonValue& operator[]( const char* key );
+	inline CCJsonValue& operator[]( const int index );
+	inline const CCJsonValue& operator[]( const char* key ) const;
+	inline const CCJsonValue& operator[]( const int index ) const;
 
-	inline bool operator==( const Cstr& val  ) const { return (m_type == JSTRING) && (m_str == val); }
+	inline bool operator==( const C_str& val  ) const { return (m_type == JSTRING) && (m_str == val); }
 	inline bool operator==( const char* val ) const { return ((m_type == JSTRING) && (m_str == val)) || ((val == 0) && (m_type == JNULL)); }
 	inline bool operator==( const long long val ) const { return (m_type == JINT) && (m_longlong == val); }
 	inline bool operator==( const unsigned long long val ) const { return (m_type == JINT) && (m_longlong == (long long)val); }
@@ -134,7 +137,7 @@ public:
 	inline bool operator==( const unsigned int val ) const { return (m_type == JINT) && (m_longlong == (long long)val); }
 	inline bool operator==( const long val ) const { return (m_type == JINT) && (m_longlong == (long long)val); }
 	inline bool operator==( const unsigned long val ) const { return (m_type == JINT) && (m_longlong == (long long)val); }
-	inline bool operator!=( const Cstr& val  ) const { return !(*this == val); }
+	inline bool operator!=( const C_str& val  ) const { return !(*this == val); }
 	inline bool operator!=( const char* val ) const { return !(*this == val); }
 	inline bool operator!=( const long long val ) const { return !(*this == val); }
 	inline bool operator!=( const unsigned long long val ) const { return !(*this == val); }
@@ -146,50 +149,50 @@ public:
 	inline bool operator!=( const long val ) const { return !(*this == val); }
 	inline bool operator!=( const unsigned long val ) const { return !(*this == val); }
 
-	inline JsonValue& operator=( const Cstr& val  ) { return operator=(val.c_str()); }
-	inline JsonValue& operator=( const char* val );
-	inline JsonValue& operator=( const long long val );
-	inline JsonValue& operator=( const unsigned long long val ) { return operator=((long long)val); }
-	inline JsonValue& operator=( const bool val );
-	inline JsonValue& operator=( const double val );
-	inline JsonValue& operator=( const float val ) { return operator=((double)val); }
-	inline JsonValue& operator=( const int val ) { return operator=((long long)val); }
-	inline JsonValue& operator=( const unsigned int val ) { return operator=((long long)val); }
-	inline JsonValue& operator=( const long val ) { return operator=((long long)val); }
-	inline JsonValue& operator=( const unsigned long val ) { return operator=((long long)val); }
+	inline CCJsonValue& operator=( const C_str& val  ) { return operator=(val.c_str()); }
+	inline CCJsonValue& operator=( const char* val );
+	inline CCJsonValue& operator=( const long long val );
+	inline CCJsonValue& operator=( const unsigned long long val ) { return operator=((long long)val); }
+	inline CCJsonValue& operator=( const bool val );
+	inline CCJsonValue& operator=( const double val );
+	inline CCJsonValue& operator=( const float val ) { return operator=((double)val); }
+	inline CCJsonValue& operator=( const int val ) { return operator=((long long)val); }
+	inline CCJsonValue& operator=( const unsigned int val ) { return operator=((long long)val); }
+	inline CCJsonValue& operator=( const long val ) { return operator=((long long)val); }
+	inline CCJsonValue& operator=( const unsigned long val ) { return operator=((long long)val); }
 
-	JsonValue() { m_values = 0; null(); }
-	JsonValue( Cstr const& data ) { m_values = 0; null(); parse(data); }
-	JsonValue( const char* data ) { m_values = 0; null(); parse(data); }
-	JsonValue( const JsonValue &other ) { Cstr w; other.write(w); parse(w); }
-	JsonValue& operator= (const JsonValue& other ) { Cstr w; other.write(w); parse(w); if ( m_values) { m_values->reverseIterationOrder(); } return *this; }
+	CCJsonValue() { m_values = 0; null(); }
+	CCJsonValue( C_str const& data ) { m_values = 0; null(); parse(data); }
+	CCJsonValue( const char* data ) { m_values = 0; null(); parse(data); }
+	CCJsonValue( const CCJsonValue &other ) { C_str w; other.write(w); parse(w); }
+	CCJsonValue& operator= (const CCJsonValue& other ) { C_str w; other.write(w); parse(w); if ( m_values) { m_values->reverseIterationOrder(); } return *this; }
 
-	~JsonValue() { clear(); }
+	~CCJsonValue() { clear(); }
 
 private:
 
-	static JsonValue m_deadValue;
+	static CCJsonValue m_deadValue;
 
-	inline void indent( Cstr& str, int level ) const;
+	inline void indent( C_str& str, int level ) const;
 	
 	operator char*() const { return 0; }
 	
 	inline int readRawValue( const char* buf );
 	
-	void createValues() { if (!m_values) m_values = new CLinkHash<JsonValue>; m_values->clear(); }
+	void createValues() { if (!m_values) m_values = new CCLinkHash<CCJsonValue>; m_values->clear(); }
 
-	Cstr m_str;
+	C_str m_str;
 	long long m_longlong;
 	double m_double;
 	int m_type;
 	
-	Cstr m_key;
+	C_str m_key;
 	int m_index;
-	CLinkHash<JsonValue> *m_values;
+	CCLinkHash<CCJsonValue> *m_values;
 };
 
 //------------------------------------------------------------------------------
-void JsonValue::clear()
+void CCJsonValue::clear()
 {
 	m_type = JNULL;
 	if ( m_values )
@@ -202,7 +205,7 @@ void JsonValue::clear()
 }
 
 //------------------------------------------------------------------------------
-const JsonValue& JsonValue::operator[]( const char* key ) const
+const CCJsonValue& CCJsonValue::operator[]( const char* key ) const
 {
 	D_JSONPARSER(printf("operator[ \"%s\" ]\n", key ));
 
@@ -217,13 +220,13 @@ const JsonValue& JsonValue::operator[]( const char* key ) const
 	}
 
 	unsigned int hash = hash32(key, strlen(key));
-	JsonValue *V = m_values->get( hash );
+	CCJsonValue *V = m_values->get( hash );
 	return V ? *V : m_deadValue.null();
 	
 }
 
 //------------------------------------------------------------------------------
-const JsonValue& JsonValue::operator[]( const int index ) const
+const CCJsonValue& CCJsonValue::operator[]( const int index ) const
 {
 	D_JSONPARSER(printf("operator[ %d ]\n", index ));
 
@@ -232,12 +235,12 @@ const JsonValue& JsonValue::operator[]( const int index ) const
 		return m_deadValue.null();
 	}
 
-	JsonValue *V = m_values->get( index );
+	CCJsonValue *V = m_values->get( index );
 	return V ? *V : m_deadValue.null();
 }
 
 //------------------------------------------------------------------------------
-JsonValue& JsonValue::operator[]( const char* key )
+CCJsonValue& CCJsonValue::operator[]( const char* key )
 {
 	D_JSONPARSER(printf("operator[ \"%s\" ]\n", key ));
 
@@ -256,7 +259,7 @@ JsonValue& JsonValue::operator[]( const char* key )
 	}
 
 	unsigned int hash = hash32(key,strlen(key));
-	JsonValue *V = m_values->get( hash );
+	CCJsonValue *V = m_values->get( hash );
 
 	if ( !V )
 	{
@@ -272,7 +275,7 @@ JsonValue& JsonValue::operator[]( const char* key )
 }
 
 //------------------------------------------------------------------------------
-JsonValue& JsonValue::operator[]( const int index )
+CCJsonValue& CCJsonValue::operator[]( const int index )
 {
 	D_JSONPARSER(printf("operator[ %d ]\n", index ));
 
@@ -295,7 +298,7 @@ JsonValue& JsonValue::operator[]( const int index )
 		return m_deadValue.null(); // only lists can have numeric keys (indexes)
 	}
 
-	JsonValue *V = m_values->get( index );
+	CCJsonValue *V = m_values->get( index );
 	if ( !V )
 	{
 		V = m_values->add( index );
@@ -310,7 +313,7 @@ JsonValue& JsonValue::operator[]( const int index )
 }
 
 //------------------------------------------------------------------------------
-JsonValue& JsonValue::operator=( const char* val )
+CCJsonValue& CCJsonValue::operator=( const char* val )
 {
 	if ( !exists() )
 	{
@@ -338,7 +341,7 @@ JsonValue& JsonValue::operator=( const char* val )
 }
 
 //------------------------------------------------------------------------------
-JsonValue& JsonValue::operator=( const long long val )
+CCJsonValue& CCJsonValue::operator=( const long long val )
 {
 	if ( !exists() )
 	{
@@ -358,7 +361,7 @@ JsonValue& JsonValue::operator=( const long long val )
 }
 
 //------------------------------------------------------------------------------
-JsonValue& JsonValue::operator=( const bool val )
+CCJsonValue& CCJsonValue::operator=( const bool val )
 {
 	if ( !exists() )
 	{
@@ -380,7 +383,7 @@ JsonValue& JsonValue::operator=( const bool val )
 }
 
 //------------------------------------------------------------------------------
-JsonValue& JsonValue::operator=( const double val )
+CCJsonValue& CCJsonValue::operator=( const double val )
 {
 	if ( !exists() )
 	{
@@ -403,7 +406,7 @@ JsonValue& JsonValue::operator=( const double val )
 }
 
 //------------------------------------------------------------------------------
-int JsonValue::parse( const char* buf, bool clearFirst )
+int CCJsonValue::parse( const char* buf, bool clearFirst )
 {
 	if ( !exists() )
 	{
@@ -523,7 +526,7 @@ AddElement:
 					D_JSONPARSER(printf("add element list 1\n"));
 
 					// expect the item
-					JsonValue* val = m_values->add( m_index++ );
+					CCJsonValue* val = m_values->add( m_index++ );
 
 					m_values->firstLinkToLast();
 
@@ -561,7 +564,7 @@ AddElement:
 					}
 					buf++; // skip marker
 
-					JsonValue* val = m_values->add( hash32(m_str, m_str.size()) );
+					CCJsonValue* val = m_values->add( hash32(m_str, m_str.size()) );
 
 					m_values->firstLinkToLast();
 
@@ -621,7 +624,7 @@ AddElement:
 }
 
 //------------------------------------------------------------------------------
-void JsonValue::indent( Cstr& str, int indentLevel ) const
+void CCJsonValue::indent( C_str& str, int indentLevel ) const
 {
 	for( int i=0; i<indentLevel; i++ )
 	{
@@ -630,7 +633,7 @@ void JsonValue::indent( Cstr& str, int indentLevel ) const
 }
 
 //------------------------------------------------------------------------------
-Cstr& JsonValue::write( Cstr& str, int indentLevel /*=-1*/ ) const
+C_str& CCJsonValue::write( C_str& str, int indentLevel /*=-1*/ ) const
 {
 	if ( !exists() )
 	{
@@ -655,7 +658,7 @@ Cstr& JsonValue::write( Cstr& str, int indentLevel /*=-1*/ ) const
 			
 			if ( m_values )
 			{
-				for( JsonValue *V = m_values->getFirst(); V; V = m_values->getNext() )
+				for( CCJsonValue *V = m_values->getFirst(); V; V = m_values->getNext() )
 				{
 					if ( comma ) // only insert a comma for the 2nd through nth
 					{
@@ -709,7 +712,7 @@ Cstr& JsonValue::write( Cstr& str, int indentLevel /*=-1*/ ) const
 			
 			if ( m_values )
 			{
-				for( JsonValue *V = m_values->getFirst(); V; V = m_values->getNext() )
+				for( CCJsonValue *V = m_values->getFirst(); V; V = m_values->getNext() )
 				{
 					D_JSONPARSER(printf("KEY[%s] val[%s]\n", V->m_key.c_str(), (const char*)*V));
 
@@ -776,7 +779,7 @@ Cstr& JsonValue::write( Cstr& str, int indentLevel /*=-1*/ ) const
 }
 
 //------------------------------------------------------------------------------
-int JsonValue::readRawValue( const char* buf )
+int CCJsonValue::readRawValue( const char* buf )
 {
 	const char* start = buf;
 	// expecting exactly and only a single value
@@ -890,7 +893,7 @@ int JsonValue::readRawValue( const char* buf )
 }
 
 //------------------------------------------------------------------------------
-int JsonValue::unicodeToUTF8( const unsigned int unicode, char* out, const unsigned int maxLen )
+int CCJsonValue::unicodeToUTF8( const unsigned int unicode, char* out, const unsigned int maxLen )
 {
 	if ( unicode <= 0x7f ) 
 	{
@@ -939,7 +942,7 @@ int JsonValue::unicodeToUTF8( const unsigned int unicode, char* out, const unsig
 }
 
 //------------------------------------------------------------------------------
-void JsonValue::UTF8toJsonUnicode( const char* in, Cstr& str )
+void CCJsonValue::UTF8toJsonUnicode( const char* in, C_str& str )
 {
 	for( unsigned int pos = 0; in[pos]; pos++ )
 	{
@@ -1054,10 +1057,10 @@ void JsonValue::UTF8toJsonUnicode( const char* in, Cstr& str )
 }
 
 //------------------------------------------------------------------------------
-int JsonValue::strJsonUnicodeToUTF8( const char* in, Cstr& out )
+int CCJsonValue::strJsonUnicodeToUTF8( const char* in, C_str& out )
 {
 	int pos = 0;
-	for( int pos=0; in[pos]; pos++ )
+	for( pos=0; in[pos]; pos++ )
 	{
 		if ( in[pos] != '\\' )
 		{
@@ -1203,6 +1206,7 @@ int JsonValue::strJsonUnicodeToUTF8( const char* in, Cstr& out )
 	return pos;
 }
 
+}
 
 #endif
 

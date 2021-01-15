@@ -1,13 +1,13 @@
-#include "source/str.h"
-#include "include/callisto.h"
+#include "source/c_str.h"
+#include "source/callisto.h"
 #include "source/vm.h"
 
 #include <assert.h>
 
-Cstr logstr;
+C_str logstr;
    
 //------------------------------------------------------------------------------
-Callisto_Handle emit( Callisto_ExecutionContext* E )
+static Callisto_Handle emit( Callisto_ExecutionContext* E )
 {
 	for( int i=0; i<E->numberOfArgs; i++ )
 	{
@@ -19,9 +19,24 @@ Callisto_Handle emit( Callisto_ExecutionContext* E )
 }
 
 //------------------------------------------------------------------------------
+static Callisto_Handle c_wait( Callisto_ExecutionContext* E )
+{
+	for( int i=0; i<E->numberOfArgs; i++ )
+	{
+		logstr.appendFormat( "%s\n", formatValue(E->Args[i]).c_str() );
+	}
+
+	Callisto_sleep( 1000 );
+	
+	return 0;
+}
+
+//------------------------------------------------------------------------------
 const Callisto_FunctionEntry logFuncs[]=
 {
 	{ "log", emit, 0 },
+
+	{ "c_wait", c_wait, 0 },
 };
 
 //------------------------------------------------------------------------------
@@ -33,8 +48,8 @@ void trace( const char* code, const unsigned int line, const unsigned int col, c
 //------------------------------------------------------------------------------
 int Callisto_tests( int runTest, bool debug )
 {
-	Cstr code;
-	Cstr codeName;
+	C_str code;
+	C_str codeName;
 
 	int err = 0;
 
@@ -47,7 +62,7 @@ int Callisto_tests( int runTest, bool debug )
 	{
 		if ( !runTest || (runTest == fileNumber) )
 		{
-			Cstr expect;
+			C_str expect;
 
 			codeName = buf;
 			codeName.trim();

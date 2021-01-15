@@ -1,22 +1,25 @@
 #include "value.h"
-#include "json_parser.h"
+#include "c_json_parser.h"
 
-JsonValue JsonValue::m_deadValue;
-template<> CObjectTPool<CLinkHash<JsonValue>::Node> CLinkHash<JsonValue>::m_linkNodes( 0, 0 );
+namespace Callisto
+{
+
+CCJsonValue CCJsonValue::m_deadValue;
+template<> CTPool<CCLinkHash<CCJsonValue>::Node> CCLinkHash<CCJsonValue>::m_linkNodes( 0, 0 );
 
 //------------------------------------------------------------------------------
-inline void clearV( CLinkHash<Value>::Node& N )
+inline void clearV( CCLinkHash<Value>::Node& N )
 {
 	clearValue( N.item );
 }
-template<> CObjectTPool<CLinkHash<Value>::Node> CLinkHash<Value>::m_linkNodes( 16, clearV );
+template<> CTPool<CCLinkHash<Value>::Node> CCLinkHash<Value>::m_linkNodes( 16, clearV );
 
 //------------------------------------------------------------------------------
-inline void clearUnitSpace( CLinkHash<Value>& space )
+inline void clearUnitSpace( CCLinkHash<Value>& space )
 {
 	space.clear();
 }
-CObjectTPool<CLinkHash<Value>> Value::m_unitSpacePool( 4, clearUnitSpace );
+CTPool<CCLinkHash<Value>> Value::m_unitSpacePool( 4, clearUnitSpace );
 
 //------------------------------------------------------------------------------
 static void clearArrayPool( Carray<Value>& array )
@@ -24,28 +27,28 @@ static void clearArrayPool( Carray<Value>& array )
 	array.clear();
 }
 
-CObjectTPool<Carray<Value>> Value::m_arrayPool( 4, clearArrayPool );
+CTPool<Carray<Value>> Value::m_arrayPool( 4, clearArrayPool );
 
-CObjectTPool<Cstr> Value::m_stringPool( 16 );
+CTPool<C_str> Value::m_stringPool( 16 );
 
 //------------------------------------------------------------------------------
-static inline void clearKV( CLinkHash<CKeyValue>::Node& N )
+static inline void clearKV( CCLinkHash<CKeyValue>::Node& N )
 {
 	clearValue( N.item.key );
 	clearValue( N.item.value );
 }
-template<> CObjectTPool<CLinkHash<CKeyValue>::Node> CLinkHash<CKeyValue>::m_linkNodes( 6, clearKV );
+template<> CTPool<CCLinkHash<CKeyValue>::Node> CCLinkHash<CKeyValue>::m_linkNodes( 6, clearKV );
 
 //------------------------------------------------------------------------------
-static void clearTableSpace( CLinkHash<CKeyValue>& space )
+static void clearTableSpace( CCLinkHash<CKeyValue>& space )
 {
 	space.clear();
 }
-CObjectTPool<CLinkHash<CKeyValue>> Value::m_tableSpacePool( 4, clearTableSpace );
+CTPool<CCLinkHash<CKeyValue>> Value::m_tableSpacePool( 4, clearTableSpace );
 
-CObjectTPool<Value> Value::m_valuePool( 32, Value::clear );
+CTPool<Value> Value::m_valuePool( 32, Value::clear );
 
-CObjectTPool<ValueIterator> Value::m_iteratorPool( 4 );
+CTPool<ValueIterator> Value::m_iteratorPool( 4 );
 
 //------------------------------------------------------------------------------
 void clearValueRef( Value& value )
@@ -110,7 +113,7 @@ void deepCopyEx( Value* target, Value* source )
 		{
 			target->allocUnit();
 
-			CLinkHash<Value>::Iterator iter( *source->unitSpace );
+			CCLinkHash<Value>::Iterator iter( *source->unitSpace );
 			for( Value* V = iter.getFirst(); V; V = iter.getNext() )
 			{
 				Value* N = target->unitSpace->add( iter.getCurrentKey() );
@@ -122,7 +125,7 @@ void deepCopyEx( Value* target, Value* source )
 		case CTYPE_TABLE:
 		{
 			target->allocTable();
-			CLinkHash<CKeyValue>::Iterator iter( *source->tableSpace );
+			CCLinkHash<CKeyValue>::Iterator iter( *source->tableSpace );
 			for( CKeyValue* K = iter.getFirst(); K; K = iter.getNext() )
 			{
 				CKeyValue* N = target->tableSpace->add( iter.getCurrentKey() );
@@ -142,4 +145,6 @@ void deepCopyEx( Value* target, Value* source )
 			break;
 		}
 	}
+}
+
 }

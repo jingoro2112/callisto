@@ -2,7 +2,7 @@
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 <HTML>
 <HEAD>
-<TITLE>callisto v0.2.0 Reference Manual</TITLE>
+<TITLE>Callisto Reference Manual</TITLE>
 <META HTTP-EQUIV="content-type"
 CONTENT="text/html; charset=iso-8859-1">
 <style type="text/css">
@@ -20,7 +20,7 @@ pre code {
 
 <h1>
 <a HREF="http://www.northarc.com/callisto/"><img src="callisto_512.jpg" alt="callisto"></a>
-<p>v0.2.0 Reference Manual
+<p>v0.3.0 Reference Manual
 </h1>
 <small>By Curtis Hartung</small>
 
@@ -92,6 +92,8 @@ are the focus.</h3>
 	  <ul>
 		 <li><a href="#thread">5.15.1 thread</a>
 		 <li><a href="#yield">5.15.2 yield</a>
+		 <li><a href="#wait">5.15.3 wait</a>
+		 <li><a href="#sleep">5.15.4 sleep</a>
 	  </ul>
 	  <li><a href="#import">5.16 import</a>
 
@@ -108,6 +110,7 @@ are the focus.</h3>
 		 <li><a href="#callisto_math">6.3.2 callisto_math</a>
 		 <li><a href="#callisto_stdlib">6.3.3 callisto_stdlib</a>
 		 <li><a href="#callisto_file">6.3.4 callisto_file</a>
+		 <li><a href="#callisto_system">6.3.5 callisto_system</a>
 	  </ul>
 
 	  <li><a href="#standardlibraries">6.7 Roadmap of Coming Features</a>
@@ -1046,7 +1049,57 @@ a + b == "some stringsome other string";</pre></code>
 
 
 <hr><p><h2><a name="threading">5.15 threading</a></h2>
-[NOT YET IMPLEMENTED]
+
+Callisto supports multiple threads of execution in the same name
+space, they can be created from the api or from a script. The
+scheduler is simple round-robin and not pre-emptive. ie- the current
+thread must <a href="#yield">yield</a> for it to get a turn.
+
+<p><h2><a name="thread">5.15.1 thread</a></h2>
+
+<p>thread takes the name of a unit, which will be called in a new
+scheduling context, and optionally a number of arguments which will be
+passed to it.
+
+<p>importantly, the new thread will not execute until the current
+thread yields.
+
+<p>the return value is a unique thread id
+
+<p>The thread shares the global namespace and all loaded libraries
+
+<pre><code>unit someTask()
+{
+    // do something
+}
+
+threadId = thread( someTask );</pre></code>
+
+When the unit returns the task will end and clean itself up.
+
+<p><h2><a name="yield">5.15.2 yield</a></h2>
+<pre><code>yield();</pre></code>
+
+<p>yield allows the scheduler to run and any other threads to execute.
+It takes no argument and always returns a null.
+
+<p><h2><a name="wait">5.15.3 wait</a></h2>
+<pre><code>wait( function, args... );</pre></code>
+
+<p>wait for the function to execute. If the function is a unit then
+this is equivilant to calling that unit. If function is a c function a
+new system thread is spawned to call it, while the callisto scheduler
+continues executing
+
+<p>When the c function returns, the task is allowed to run again once
+the scheduler is yielded to
+
+
+<p><h2><a name="sleep">5.15.3 sleep</a></h2>
+<pre><code>sleep( milliseconds );</pre></code>
+
+This call will sleep the thread until milliseconds has passed. This
+does count as a yield.
 
 
 <hr><p><h2><a name="imoprt">5.16 import</a></h2>
@@ -1093,8 +1146,9 @@ directly accessible.
 <li><a href="#Callisto_Error"><code>Callisto_Error</code></a>
 <li><a href="#Callisto_lastErr"><code>Callisto_lastErr</code></a>
 <li><a href="#Callisto_formatError"><code>Callisto_formatError</code></a>
-<li><a href="#Callisto_RunOptions"><code>Callisto_RunOptions</code></a>
-<li><a href="#Callisto_ThreadState"><code>Callisto_ThreadState</code></a>
+<li><a href="#Callisto_RunOptions"><code>Callisto_RunOptions</code></a>\
+<li><a href="#Callisto_yield"><code>Callisto_yield</code></a>
+<li><a href="#Callisto_startThread"><code>Callisto_startThread</code></a>
 <li><a href="#Callisto_run"><code>Callisto_run</code></a>
 <li><a href="#Callisto_run"><code>Callisto_runCompiled</code></a>
 <li><a href="#Callisto_run"><code>Callisto_runFile</code></a>
@@ -1107,11 +1161,12 @@ directly accessible.
 <p><li><a href="#Callisto_importAll">Libraries</a>
 <ul>
 <li><a href="#Callisto_importAll"><code>Callisto_importAll</code></a>
-<li><a href="#Callisto_import"><code>Callisto_importStdlib</code></a>
-<li><a href="#Callisto_import"><code>Callisto_importString</code></a>
-<li><a href="#Callisto_import"><code>Callisto_importMath</code></a>
-<li><a href="#Callisto_import"><code>Callisto_importFile</code></a>
-<li><a href="#Callisto_import"><code>Callisto_importIterators</code></a>
+<li><a href="#Callisto_stdlib"><code>Callisto_importStdlib</code></a>
+<li><a href="#Callisto_string"><code>Callisto_importString</code></a>
+<li><a href="#Callisto_math"><code>Callisto_importMath</code></a>
+<li><a href="#Callisto_file"><code>Callisto_importFile</code></a>
+<li><a href="#Callisto_iterators"><code>Callisto_importIterators</code></a>
+<li><a href="#Callisto_system"><code>Callisto_importSystem</code></a>
 </ul>
 
 <p><li><a href="#callbacks">Callbacks</a>
@@ -1310,18 +1365,26 @@ default: false
 
 
 
-
-<hr><h3><a name="Callisto_ThreadState"><code>Callisto_ThreadState</code></a></h3><p>
-<pre><code>enum Callisto_ThreadState
-{
-	Runnable, // will be run the next time the scheduler encounters it
-	Running, // is running right now (only one thread can have this status)
-	Waiting, // waiting on an event and will not be scheduled
-	Reap, // scheduler will reap this thread when it encounters it
-};
+<hr><h3><a name="Callisto_yield"><code>Callisto_yield</code></a></h3><p>
+<code><pre>void Callisto_yield( Callisto_ExecutionContext* E );
 </code></pre>
-Defines the state a thread is in, accessible via
-<a href="#Callisto_getThreadState"><code>Callisto_getThreadState</code></a>
+This must be called from a callisto callback. As soon as the callback
+returns the current thread will execute a <a href="#yield">yield</a> as if it were called
+from script
+
+
+
+<hr><h3><a name="Callisto_startThread"><code>Callisto_startThread</code></a></h3><p>
+<code><pre>const int Callisto_startThread( Callisto_ExecutionContext* E, const char* unitName, const Callisto_Handle argumentHandle );
+const int Callisto_startThread( Callisto_ExecutionContext* E, const char* unitName, const Callisto_Handle* argumentValueHandleList =0 );
+const int Callisto_startThread( Callisto_Context* C, const char* unitName, const Callisto_Handle argumentHandle );
+const int Callisto_startThread( Callisto_Context* C, const char* unitName, const Callisto_Handle* argumentValueHandleList =0 );
+</code></pre>
+Start a new thread of execution and pass it the appropriate arguments.
+This thread will not begin processing until the current thread
+<a href="#yield">yields</a>
+
+
 
 
 
@@ -1870,6 +1933,7 @@ available to programmers, so they may be modified if desired
 <li><a href="#Callisto_math"><code>Callisto_importMath</code></a>
 <li><a href="#Callisto_file"><code>Callisto_importFile</code></a>
 <li><a href="#Callisto_iterators"><code>Callisto_importIterators</code></a>
+<li><a href="#Callisto_system"><code>Callisto_importSystem</code></a>
 </ul>
 
 <hr><h3><a name="Callisto_stdlib"><code>stdlib</code></a></h3><p>
@@ -2077,6 +2141,21 @@ number of bytes written on success, otherwise null.
 <code><pre>file::delete( name )
 </code></pre>
 Deletes the file <code>name</code>
+
+
+
+<hr><h3><a name="Callisto_system"><code>system</code></a></h3><p>
+
+<code><pre>sys::milliseconds()
+</code></pre>
+return a millisecond ticker, accuracy is system dependant, it will be
+milliseconds since the library was loaded.
+
+
+<code><pre>sys::epoch()
+</code></pre>
+return the number of seconds since January 1st, 1970 (Unix time)
+
 
 <hr><h3><a name="Callisto_iterators"><code>iterators</code></a></h3><p>
 

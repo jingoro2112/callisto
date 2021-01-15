@@ -1,8 +1,11 @@
-#ifndef RANDOM_H
-#define RANDOM_H
+#ifndef CALLISTO_RANDOM_H
+#define CALLISTO_RANDOM_H
 /*----------------------------------------------------------------------------*/
 
 #include <time.h>
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
 class CRandom
@@ -121,6 +124,8 @@ void CRandom::seed( unsigned int s )
 	kissy = (unsigned int)mtwister();
 	kissz = (unsigned int)mtwister();
 	kissc = (unsigned int)mtwister();
+}
+
 }
 
 #endif

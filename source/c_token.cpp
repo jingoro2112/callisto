@@ -1,9 +1,12 @@
 #include "cc.h"
 #include "utf8.h"
 
-extern CLog Log;
-
 #define D_TOKEN(a) //a
+
+extern CLog C_Log;
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
 inline bool c_isspace( const wchar_t c )
@@ -12,10 +15,10 @@ inline bool c_isspace( const wchar_t c )
 }
 
 //------------------------------------------------------------------------------
-bool parseAsString( Compilation& comp, Cstr& tokenReturn )
+bool parseAsString( Compilation& comp, C_str& tokenReturn )
 {
-	Wstr reader;
-	Wstr token;
+	W_str reader;
+	W_str token;
 	
 	while( comp.pos < comp.source.size() )
 	{
@@ -51,14 +54,14 @@ bool parseAsString( Compilation& comp, Cstr& tokenReturn )
 		}
 		else if ( c == '\n' )
 		{
-			Log("Newline in string constant" );
+			C_Log("Newline in string constant" );
 			return false;
 		}
 		else if ( c == '\\' )
 		{
 			if ( comp.pos + 1 >= comp.source.size() )
 			{
-				Log("bad '\\' in string constant" );
+				C_Log("bad '\\' in string constant" );
 				return false;
 			}
 
@@ -90,7 +93,7 @@ bool parseAsString( Compilation& comp, Cstr& tokenReturn )
 			}
 			else
 			{
-				Log("unrecognized escaped char '%c'", c );
+				C_Log("unrecognized escaped char '%c'", c );
 				return false;
 			}
 		}
@@ -100,13 +103,13 @@ bool parseAsString( Compilation& comp, Cstr& tokenReturn )
 		}
 	}
 
-	Log( "unterminated string literal" );
+	C_Log( "unterminated string literal" );
 
 	return false;
 }
 
 //------------------------------------------------------------------------------
-bool getToken( Compilation& comp, Cstr& token, CToken& value )
+bool getToken( Compilation& comp, C_str& token, CToken& value )
 {
 	comp.lastPos = comp.pos;
 
@@ -131,84 +134,84 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '=='"));
+			D_TOKEN(C_Log("token '=='"));
 			token += '=';
 			++comp.pos;
 		}
 		else
 		{
-			D_TOKEN(Log("token '='"));
+			D_TOKEN(C_Log("token '='"));
 		}
 	}
 	else if ( token[0] == '!' )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '!='"));
+			D_TOKEN(C_Log("token '!='"));
 			token += '=';
 			++comp.pos;
 		}
 		else
 		{
-			D_TOKEN(Log("token '!'"));
+			D_TOKEN(C_Log("token '!'"));
 		}
 	}
 	else if ( token[0] == ':' )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == ':' )
 		{
-			D_TOKEN(Log("token '::'"));
+			D_TOKEN(C_Log("token '::'"));
 			token += ':';
 			++comp.pos;
 		}
 		else
 		{
-			D_TOKEN(Log("token ':'"));
+			D_TOKEN(C_Log("token ':'"));
 		}
 	}
 	else if ( token[0] == '*' )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '*='"));
+			D_TOKEN(C_Log("token '*='"));
 			token += '=';
 			++comp.pos;
 		}
 		else
 		{
-			D_TOKEN(Log("token '*'"));
+			D_TOKEN(C_Log("token '*'"));
 		}
 	}
 	else if ( token[0] == '%' )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '%='"));
+			D_TOKEN(C_Log("token '%='"));
 			token += '=';
 			++comp.pos;
 		}
 		else
 		{
-			D_TOKEN(Log("token '%'"));
+			D_TOKEN(C_Log("token '%'"));
 		}
 	}
 	else if ( token[0] == '<' )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '<='"));
+			D_TOKEN(C_Log("token '<='"));
 			token += '=';
 			++comp.pos;
 		}
 		else if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '<' )
 		{
-			D_TOKEN(Log("token '<<'"));
+			D_TOKEN(C_Log("token '<<'"));
 			token += '<';
 			++comp.pos;
 
 			if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 			{
-				D_TOKEN(Log("token '<<='"));
+				D_TOKEN(C_Log("token '<<='"));
 				token += '=';
 				++comp.pos;
 			}
@@ -218,19 +221,19 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '>='"));
+			D_TOKEN(C_Log("token '>='"));
 			token += '=';
 			++comp.pos;
 		}
 		else if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '>' )
 		{
-			D_TOKEN(Log("token '>>'"));
+			D_TOKEN(C_Log("token '>>'"));
 			token += '>';
 			++comp.pos;
 
 			if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 			{
-				D_TOKEN(Log("token '>>='"));
+				D_TOKEN(C_Log("token '>>='"));
 				token += '=';
 				++comp.pos;
 			}
@@ -240,51 +243,51 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '&' )
 		{
-			D_TOKEN(Log("token '&&'"));
+			D_TOKEN(C_Log("token '&&'"));
 			token += '&';
 			++comp.pos;
 		}
 		else if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '&='"));
+			D_TOKEN(C_Log("token '&='"));
 			token += '=';
 			++comp.pos;
 		}
 		else
 		{
-			D_TOKEN(Log("token '&'"));
+			D_TOKEN(C_Log("token '&'"));
 		}
 	}
 	else if ( token[0] == '^' )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '^='"));
+			D_TOKEN(C_Log("token '^='"));
 			token += '=';
 			++comp.pos;
 		}
 		else
 		{
-			D_TOKEN(Log("token '&'"));
+			D_TOKEN(C_Log("token '&'"));
 		}
 	}
 	else if ( token[0] == '|' )
 	{
 		if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '|' )
 		{
-			D_TOKEN(Log("token '||'"));
+			D_TOKEN(C_Log("token '||'"));
 			token += '|';
 			++comp.pos;
 		}
 		else if ( (comp.pos < comp.source.size()) && comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '|='"));
+			D_TOKEN(C_Log("token '|='"));
 			token += '=';
 			++comp.pos;
 		}
 		else
 		{
-			D_TOKEN(Log("token '|'"));
+			D_TOKEN(C_Log("token '|'"));
 		}
 	}
 	else if ( token[0] == '+' )
@@ -293,20 +296,20 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 		{
 			if ( comp.source[comp.pos] == '+' )
 			{
-				D_TOKEN(Log("token '++'"));
+				D_TOKEN(C_Log("token '++'"));
 				token += '+';
 				++comp.pos;
 			}
 			else if ( comp.source[comp.pos] == '=' )
 			{
-				D_TOKEN(Log("token '+='"));
+				D_TOKEN(C_Log("token '+='"));
 				token += '=';
 				++comp.pos;
 			}
 		}
 		else
 		{
-			D_TOKEN(Log("token '+'"));
+			D_TOKEN(C_Log("token '+'"));
 		}
 	}
 	else if ( token[0] == '-' )
@@ -315,20 +318,20 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 		{
 			if ( comp.source[comp.pos] == '-' )
 			{
-				D_TOKEN(Log("token '--'"));
+				D_TOKEN(C_Log("token '--'"));
 				token += '-';
 				++comp.pos;
 			}
 			else if ( comp.source[comp.pos] == '=' )
 			{
-				D_TOKEN(Log("token '--'"));
+				D_TOKEN(C_Log("token '--'"));
 				token += '-';
 				++comp.pos;
 			}
 		}
 		else
 		{
-			D_TOKEN(Log("token '-'"));
+			D_TOKEN(C_Log("token '-'"));
 		}
 	}
 	else if ( token[0] == '\"' )
@@ -382,7 +385,7 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 
 				if ( comp.source[comp.pos++] == '*' && comp.source[comp.pos++] == '/' )
 				{
-					D_TOKEN(Log("end of block comment"));
+					D_TOKEN(C_Log("end of block comment"));
 					return getToken( comp, token, value );
 				}
 			}
@@ -390,7 +393,7 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 
 		if ( comp.source[comp.pos] == '=' )
 		{
-			D_TOKEN(Log("token '/='"));
+			D_TOKEN(C_Log("token '/='"));
 			token += '=';
 			++comp.pos;
 		}
@@ -401,7 +404,7 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 	{
 		if ( comp.pos >= comp.source.size() )
 		{
-			Log( "<1> early termination" );
+			C_Log( "<1> early termination" );
 			return false;
 		}
 
@@ -414,7 +417,7 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 			{
 				if ( (comp.pos + 1) >= comp.source.size() )
 				{
-					Log( "<2> early termination" );
+					C_Log( "<2> early termination" );
 					return false;
 				}
 
@@ -429,7 +432,7 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 			if ( token.size() <= 18 )
 			{
 				value.type = CTYPE_INT;
-				value.i64 = (int64_t)strtoull( Cstr(token).c_str(2), 0, 16 );
+				value.i64 = (int64_t)strtoull( C_str(token).c_str(2), 0, 16 );
 			}
 			else
 			{
@@ -505,12 +508,12 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 			if ( decimal )
 			{
 				value.type = CTYPE_FLOAT;
-				value.d = atof( Cstr(token) );
+				value.d = atof( C_str(token) );
 			}
 			else
 			{
 				value.type = CTYPE_INT;
-				value.i64 = (int64_t)strtoll( Cstr(token), 0, 10 );
+				value.i64 = (int64_t)strtoll( C_str(token), 0, 10 );
 			}
 		}
 	}
@@ -529,8 +532,9 @@ bool getToken( Compilation& comp, Cstr& token, CToken& value )
 
 	value.spaceAfter = (comp.pos < comp.source.size()) && isspace(comp.source[comp.pos]);
 	
-	D_TOKEN(Log("token[%s] %s", token.c_str(), (value.type == CTYPE_NULL) ? "" : formatToken(value).c_str()));
+	D_TOKEN(C_Log("token[%s] %s", token.c_str(), (value.type == CTYPE_NULL) ? "" : formatToken(value).c_str()));
 
 	return true;
 }
 
+}

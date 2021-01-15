@@ -1,6 +1,9 @@
-#ifndef OPCODE_H
-#define OPCODE_H
+#ifndef CALLISTO_OPCODE_H
+#define CALLISTO_OPCODE_H
 /*------------------------------------------------------------------------------*/
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
 enum OpcodeType
@@ -13,9 +16,14 @@ enum OpcodeType
 	O_CallIteratorAccessor,
 
 	O_Return, // end of a unit
-	O_Yield,
-	O_Thread,
-	O_ThreadEnd,
+
+	O_Sleep, // sleep for n milliseconds
+	O_Yield, // yield one cycle
+	O_Wait, // wait for inner function to finish, if this is a c function, spawn a new thread to process it
+	O_WaitGlobalOnly,
+
+	O_Thread, // create another thread and start executing it
+	O_ThreadGlobalOnly, // create another thread and start executing it
 
 	O_ClaimArgument, // [as label] define a label which can be referred to within a unit as a passed arg value
 	O_ClaimCopyArgument, // [as label] copy the value so it is NOT a reference
@@ -137,7 +145,7 @@ enum OpcodeType
 struct OpcodeString
 {
 	char opcode;
-	Cstr name;
+	C_str name;
 };
 
 //------------------------------------------------------------------------------
@@ -149,7 +157,10 @@ const OpcodeString c_opcodes[] =
 	{ O_CallIteratorAccessor, "O_CallIteratorAccessor" },
 	{ O_Return, "O_Return" },
 	{ O_Yield, "O_Yield" },
+	{ O_Wait, "O_Wait" },
+	{ O_WaitGlobalOnly, "O_WaitGlobalOnly" },
 	{ O_Thread, "O_Thread" },
+	{ O_ThreadGlobalOnly, "O_ThreadGlobalOnly" },
 	{ O_Import, "O_Import" },
 	{ O_ClaimArgument, "O_ClaimArgument" },
 	{ O_ClaimCopyArgument, "O_ClaimCopyArgument" },
@@ -224,7 +235,7 @@ const OpcodeString c_opcodes[] =
 };
 
 //------------------------------------------------------------------------------
-const Cstr c_reserved[] =
+const C_str c_reserved[] =
 {
 	{ "break" },
 	{ "case" },
@@ -253,9 +264,12 @@ const Cstr c_reserved[] =
 	{ "true" },
 	{ "unit" },
 	{ "while" },
+	{ "yield" },
 	{ "wait" },
 
 	{ "" },
 };
+
+}
 
 #endif

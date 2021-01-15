@@ -2,10 +2,13 @@
 #define UTF8_H
 /*------------------------------------------------------------------------------*/
 
-#include "str.h"
+#include "c_str.h"
+
+namespace Callisto
+{
 
 //------------------------------------------------------------------------------
-inline int unicodeToUTF8( const wchar_t* unicode, const int length, Cstr& out )
+inline int unicodeToUTF8( const wchar_t* unicode, const int length, C_str& out )
 {
 	size_t len = length ? length : wcslen(unicode);
 
@@ -43,7 +46,7 @@ inline int unicodeToUTF8( const wchar_t* unicode, const int length, Cstr& out )
 }
 
 //------------------------------------------------------------------------------
-inline unsigned int UTF8ToUnicode( const unsigned char* in, Wstr& str, const int charsToRead =0 )
+inline unsigned int UTF8ToUnicode( const unsigned char* in, W_str& str, const int charsToRead =0 )
 {
 	int chars = 0;
 	unsigned int pos = 0;
@@ -146,6 +149,8 @@ inline unsigned int UTF8ToUnicode( const unsigned char* in, Wstr& str, const int
 	}
 
 	return pos;
+}
+
 }
 
 #endif
