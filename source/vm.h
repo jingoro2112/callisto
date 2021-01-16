@@ -113,7 +113,6 @@ private:
 
 }
 
-
 //------------------------------------------------------------------------------
 void Callisto_ExecutionContext::clear()
 {
@@ -125,7 +124,6 @@ void Callisto_ExecutionContext::clear()
 	userData = 0;
 	ExecutionFrame::clear( *frame );
 }
-
 
 // Callisto_Context holds global info, it has a "root unit" that has no parents and represents global namespace
 // - pools all values and units keyvalues pool themselves
@@ -258,6 +256,7 @@ Callisto_ExecutionContext* doCreateThreadFromUnit( Callisto_Context* C, UnitDefi
 bool isValidLabel( C_str& token, bool doubleColonOkay =false );
 
 // OS- specific calls, default implementations exist
+void Callisto_getLine( C_str& line );
 void Callisto_sleep( const int milliseconds );
 int64_t Callisto_getCurrentMilliseconds();
 int64_t Callisto_getEpoch();

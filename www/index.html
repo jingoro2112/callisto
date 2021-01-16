@@ -24,7 +24,8 @@ pre code {
 </h1>
 <small>By Curtis Hartung</small>
 
-<p><a href="https://www.tapatalk.com/groups/callisto/">[ Community Forums ]</a>
+<p><a href="https://www.tapatalk.com/groups/callisto/">[ Community
+Forums ]</a><a href="#downloads">[ Downloads ]</a>
 
 <p><h3>Cross-platform</h3>Tested on: Windows, ARM (Raspberry Pi), and
 linux and the byte-code is platform/endian independant
@@ -171,7 +172,7 @@ myself, I decided to write my own, with some rather aggressive goals:
 boost), everything you need is part of the download 
 <li>facilitate object-oriented styles, complete with inheritance
 <li>none of the whacked out ivory-tower nonesense that has been
-larded into c++ (lambdas? c'mon)
+larded into today's high level languages
 <li>teach myself how to write a compiler (this was outlandishly hard)
 <li>not inventing new syntax to express familiar ideas (so tempting to
 make a language "your own")
@@ -748,7 +749,8 @@ These keywords may not be symbols:
    do        else      enum      false     float     
    for       foreach   if        import    int
    new       null      NULL      return    string
-   switch    true      unit      while
+   switch    true      unit      wait      while
+   yield
 </pre></code>
 
 <hr><p><h2><a name="breakcontinue">5.2 break/continue</a></h2>
@@ -2157,6 +2159,11 @@ milliseconds since the library was loaded.
 return the number of seconds since January 1st, 1970 (Unix time)
 
 
+<code><pre>sys::getline()
+</code></pre>
+return an input line of text
+
+
 <hr><h3><a name="Callisto_iterators"><code>iterators</code></a></h3><p>
 
 Iterators can be accessed from within loops in callisto. in all cases
@@ -2212,7 +2219,7 @@ table::count( table )
 <h1><a name="downloads">7.0 Downloads</a></h1>
 
 Latest
-<a href="http://northarc.com/callisto/callisto-0.2.0.zip">Version v0.2.0</a>
+<a href="http://northarc.com/callisto/callisto-0.3.0.zip">Version v0.3.0</a>
 
 
 <h1><a name="contributing">8.0 Contributing</a></h1>

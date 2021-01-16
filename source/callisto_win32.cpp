@@ -1,10 +1,22 @@
 #include <windows.h>
 #include <process.h>
 
+#include <iostream>
+#include <string>
+
 #include "vm.h"
 
 namespace Callisto
 {
+
+//------------------------------------------------------------------------------
+void Callisto_getLine( C_str& line )
+{
+	std::string S;
+	std::getline(std::cin, S );
+
+	line = S.c_str();
+}
 
 //------------------------------------------------------------------------------
 void Callisto_sleep( const int milliseconds )

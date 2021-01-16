@@ -8,7 +8,26 @@
 
 namespace Callisto
 {
+
+//------------------------------------------------------------------------------
+void Callisto_getLine( C_str& line )
+{
+	line.clear();
 	
+	char* buffer = 0;
+	size_t bufsize = 0;
+
+	if ( getline(&buffer, &bufsize, stdin) != -1 )
+	{
+		line.set( buffer, bufsize );
+		free( buffer );
+	}
+	else
+	{
+		line.clear();
+	}
+}
+
 //------------------------------------------------------------------------------
 void Callisto_sleep( const int milliseconds )
 {

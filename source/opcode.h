@@ -263,9 +263,9 @@ const C_str c_reserved[] =
 	{ "thread" },
 	{ "true" },
 	{ "unit" },
+	{ "wait" },
 	{ "while" },
 	{ "yield" },
-	{ "wait" },
 
 	{ "" },
 };

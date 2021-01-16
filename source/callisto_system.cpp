@@ -18,10 +18,19 @@ static Callisto_Handle c_milliseconds( Callisto_ExecutionContext* E )
 }
 
 //------------------------------------------------------------------------------
+static Callisto_Handle c_getLine( Callisto_ExecutionContext* E )
+{
+	C_str line;
+	Callisto_getLine( line );
+	return Callisto_setValue( E, line );
+}
+
+//------------------------------------------------------------------------------
 static const Callisto_FunctionEntry Callisto_system[]=
 {
 	{ "sys::milliseconds", c_milliseconds, 0 },
 	{ "sys::epoch", c_epoch, 0 },
+	{ "sys::getline", c_getLine, 0 },
 };
 
 //------------------------------------------------------------------------------

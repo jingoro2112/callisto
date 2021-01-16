@@ -148,35 +148,6 @@ static Callisto_Handle epochtime( Callisto_ExecutionContext* E )
 }
 
 /*
-//------------------------------------------------------------------------------
-#ifdef __linux__
-#include <sys/time.h>
-static Callisto_Handle dogetline( Callisto_ExecutionContext* E )
-{
-	char* buffer = 0;
-	size_t bufsize = 0;
-	Callisto_Handle ret = 0;
-	if ( getline( &buffer, &bufsize, stdin ) != -1 )
-	{
-		ret = Callisto_setValue( E, buffer );
-		free( buffer );
-	}
-
-	return ret;
-}
-
-//------------------------------------------------------------------------------
-static Callisto_Handle getTimeOfDay( Callisto_ExecutionContext* E )
-{
-	struct timeval tv;
-	gettimeofday( &tv, 0 );
-	return Callisto_setValue( E, (double)tv.tv_sec + ((double)tv.tv_usec / 1000000.) );
-}
-
-int gettimeofday(struct timeval *tv, struct timezone *tz);
-
-#endif
-
 #ifdef _WIN32
 #include <iostream>
 #include <string>
@@ -273,9 +244,6 @@ static const Callisto_FunctionEntry Callisto_stdlib[]=
 	{ "stlib::srandom", sranint, 0 },
 	{ "stlib::epoch", epochtime, 0 },
 	{ "stlib::typeof", type_of, 0 },
-
-//	{ "stlib::time", getTimeOfDay, 0 },
-//	{ "stlib::getline", dogetline, 0 },
 };
 
 //------------------------------------------------------------------------------
